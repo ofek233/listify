@@ -12,6 +12,27 @@ class AppList {
     required this.folderId,
     this.type = ListType.regular,
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'folder_id': folderId,
+      'type': type.toString().split('.').last,
+    };
+  }
+
+  factory AppList.fromMap(Map<String, dynamic> map) {
+    return AppList(
+      id: map['id'],
+      title: map['title'],
+      folderId: map['folder_id'],
+      type: ListType.values.firstWhere(
+        (e) => e.toString().split('.').last == map['type'],
+        orElse: () => ListType.regular,
+      ),
+    );
+  }
 }
 
 // import 'package:flutter/material.dart';

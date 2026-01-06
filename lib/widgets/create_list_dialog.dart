@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import '../models/folder_model.dart';
 import '../models/list_model.dart';
 import '../models/list_type.dart';
+import '../database_helper.dart';
 
 class CreateListDialog extends StatefulWidget {
   final List<Folder> folders;
-  final void Function(AppList) onCreate;
+  final Future<void> Function(AppList) onCreate;
 
   const CreateListDialog({
     super.key,
@@ -27,7 +28,7 @@ class _CreateListDialogState extends State<CreateListDialog> {
     selectedFolder = widget.folders.first;
   }
 
-  void _createList() {
+  void _createList() async {
     if (_titleController.text.trim().isEmpty) return;
 
     final newList = AppList(
@@ -37,7 +38,8 @@ class _CreateListDialogState extends State<CreateListDialog> {
       type: ListType.regular,
     );
 
-    widget.onCreate(newList);
+    await DatabaseHelper().insertList(newList);
+    await widget.onCreate(newList);
     Navigator.pop(context);
   }
 
