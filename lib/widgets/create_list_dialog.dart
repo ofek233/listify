@@ -57,7 +57,7 @@ class _CreateListDialogState extends State<CreateListDialog> {
           const SizedBox(height: 16),
 
           DropdownButtonFormField<Folder>(
-            value: selectedFolder,
+            initialValue: selectedFolder,
             items: widget.folders
                 .map(
                   (folder) => DropdownMenuItem(

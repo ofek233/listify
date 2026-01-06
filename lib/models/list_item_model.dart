@@ -1,15 +1,23 @@
-import 'item_field_model.dart';
+import 'list_field_model.dart';
+import 'list_field_value_model.dart';
 
-class ListItem {
+class ListItemModel {
   final String id;
   String title;
   bool completed;
-  final List<ItemField> fields;
 
-  ListItem({
+  /// הגדרת שדות
+  List<ListField> fields;
+
+  /// ערכי שדות
+  List<ListFieldValue> fieldValues;
+
+  ListItemModel({
     required this.id,
     required this.title,
     this.completed = false,
-    List<ItemField>? fields,
-  }) : fields = fields ?? [];
+    List<ListField>? fields,
+    List<ListFieldValue>? fieldValues,
+  })  : fields = fields ?? [],
+        fieldValues = fieldValues ?? [];
 }

@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/list_item_model.dart';
-import '../models/item_field_model.dart';
 import '../models/item_field_type.dart';
+import '../models/list_field_model.dart';
+import '../models/list_field_value_model.dart';
+
+typedef ListItem = ListItemModel;
+typedef FieldType = ItemFieldType;
 
 class ItemEditDialog extends StatefulWidget {
   final ListItem item;
@@ -37,7 +41,7 @@ class _ItemEditDialogState extends State<ItemEditDialog> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<ItemFieldType>(
-                value: selectedType,
+                initialValue: selectedType,
                 items: ItemFieldType.values
                     .map(
                       (type) => DropdownMenuItem(
@@ -63,8 +67,8 @@ class _ItemEditDialogState extends State<ItemEditDialog> {
 
                 setState(() {
                   widget.item.fields.add(
-                    ItemField(
-                      id: DateTime.now().toString(),
+                    ListField(
+                      id: UniqueKey().toString(),
                       name: nameController.text.trim(),
                       type: selectedType,
                     ),
@@ -80,6 +84,82 @@ class _ItemEditDialogState extends State<ItemEditDialog> {
         );
       },
     );
+  }
+
+  void _editFieldValue(ListField field) {
+    final valueModel = widget.item.fieldValues.firstWhere(
+      (v) => v.fieldId == field.id,
+      orElse: () {
+        final v = ListFieldValue(
+          fieldId: field.id,
+        );
+        widget.item.fieldValues.add(v);
+        return v;
+      },
+    );
+
+    showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: Text(field.name),
+          content: _buildFieldEditor(field, valueModel),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Save"),
+            )
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildFieldEditor(
+    ListField field,
+    ListFieldValue valueModel,
+  ) {
+    switch (field.type) {
+      case ItemFieldType.shortText:
+        return TextField(
+          controller: TextEditingController(text: valueModel.value?.toString() ?? ''),
+          onChanged: (v) => valueModel.value = v,
+          decoration: const InputDecoration(hintText: "Enter text"),
+        );
+
+      case ItemFieldType.number:
+        return TextField(
+          controller: TextEditingController(text: valueModel.value?.toString() ?? ''),
+          keyboardType: TextInputType.number,
+          onChanged: (v) => valueModel.value = int.tryParse(v),
+          decoration: const InputDecoration(hintText: "Enter number"),
+        );
+
+      case ItemFieldType.yesNo:
+        return SwitchListTile(
+          title: const Text("Yes / No"),
+          value: valueModel.value ?? false,
+          onChanged: (v) => setState(() => valueModel.value = v),
+        );
+
+      case ItemFieldType.date:
+        return ElevatedButton(
+          child: Text(
+            valueModel.value != null ? (valueModel.value as DateTime).toString() : "Pick date",
+          ),
+          onPressed: () async {
+            final date = await showDatePicker(
+              context: context,
+              initialDate: valueModel.value ?? DateTime.now(),
+              firstDate: DateTime(1900),
+              lastDate: DateTime(2100),
+            );
+            if (date != null) {
+              setState(() => valueModel.value = date);
+            }
+          },
+        );
+    }
   }
 
   @override
@@ -110,6 +190,7 @@ class _ItemEditDialogState extends State<ItemEditDialog> {
                 return ListTile(
                   title: Text(field.name),
                   subtitle: Text(field.type.name),
+                  onTap: () => _editFieldValue(field),
                 );
               }),
 

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/list_item_model.dart';
 import '../widgets/item_edit_dialog.dart';
 
+typedef ListItem = ListItemModel;
+
 class ListDetailPage extends StatefulWidget {
   final String title;
 
@@ -12,7 +14,7 @@ class ListDetailPage extends StatefulWidget {
 }
 
 class _ListDetailPageState extends State<ListDetailPage> {
-  final List<ListItem> items = [];
+  final List<ListItemModel> items = [];
 
   void _addItem(String name) {
     setState(() {
@@ -54,9 +56,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
           );
         },
       ),
-
       floatingActionButton: FloatingActionButton(
-        child: const Icon(Icons.add),
         onPressed: () {
           showDialog(
             context: context,
@@ -90,6 +90,41 @@ class _ListDetailPageState extends State<ListDetailPage> {
           );
         },
       ),
+      // floatingActionButton: FloatingActionButton(
+      //   child: const Icon(Icons.add),
+      //   onPressed: () {
+      //     showDialog(
+      //       context: context,
+      //       builder: (_) {
+      //         final controller = TextEditingController();
+      //         return AlertDialog(
+      //           title: const Text('Add Item'),
+      //           content: TextField(
+      //             controller: controller,
+      //             autofocus: true,
+      //             decoration:
+      //                 const InputDecoration(labelText: 'Item name'),
+      //           ),
+      //           actions: [
+      //             TextButton(
+      //               onPressed: () => Navigator.pop(context),
+      //               child: const Text('Cancel'),
+      //             ),
+      //             ElevatedButton(
+      //               onPressed: () {
+      //                 if (controller.text.trim().isNotEmpty) {
+      //                   _addItem(controller.text.trim());
+      //                   Navigator.pop(context);
+      //                 }
+      //               },
+      //               child: const Text('Add'),
+      //             ),
+      //           ],
+      //         );
+      //       },
+      //     );
+      //   },
+      // ),
     );
   }
 }
