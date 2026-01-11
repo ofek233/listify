@@ -23,9 +23,9 @@ class ListDetailPage extends StatefulWidget {
 class _ListDetailPageState extends State<ListDetailPage> {
   final DatabaseHelper _dbHelper = DatabaseHelper();
   List<ListItemModel> items = [];
-  List<ListField> fields = [];
+  AppList? list;
   bool isSelectionMode = false;
-  Set<String> selectedItems = Set<String>();
+  Set<String> selectedItems = <String>{};
   List<ListItemModel>? copiedItems;
 
   @override
@@ -35,8 +35,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
   }
 
   Future<void> _loadData() async {
+    list = await _dbHelper.getList(widget.listId);
     items = await _dbHelper.getItemsWithDetails(widget.listId);
-    fields = await _dbHelper.getFields(widget.listId);
     setState(() {});
   }
 
@@ -47,6 +47,55 @@ class _ListDetailPageState extends State<ListDetailPage> {
       listId: widget.listId,
     );
     await _dbHelper.insertItem(newItem);
+    if (list?.roleModelItemId != null) {
+      final roleItem = await _dbHelper.getItem(list!.roleModelItemId!);
+      if (roleItem != null) {
+        roleItem.fields = await _dbHelper.getFields(roleItem.id);
+        for (final field in roleItem.fields) {
+          final existing = newItem.fields.where((f) => f.name == field.name && f.type == field.type);
+          if (existing.isEmpty) {
+            final newField = field.copyWith(id: DateTime.now().millisecondsSinceEpoch.toString(), itemId: newItem.id);
+            await _dbHelper.insertField(newField);
+            await _dbHelper.insertOrUpdateFieldValue(ListFieldValue(fieldId: newField.id, itemId: newItem.id, value: null));
+          }
+        }
+      }
+    }
+    await _loadData();
+  }
+
+  void _showRenameItemDialog(ListItemModel item) {
+    final controller = TextEditingController(text: item.title);
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Rename Item'),
+        content: TextField(controller: controller),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              await _dbHelper.updateItem(item.copyWith(title: controller.text));
+              await _loadData();
+              Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _makeRoleModel(ListItemModel item) async {
+    if (list == null) return;
+    // Set role model
+    await _dbHelper.updateList(list!.copyWith(roleModelItemId: item.id));
+    // Apply role model fields to all existing items
+    await _dbHelper.applyRoleModelFields(widget.listId, item.id);
+    // Set order to 0, shift others
+    item.order = 0;
+    await _dbHelper.updateItem(item);
+    await _dbHelper.updateItemsOrder(widget.listId, item.id);
     await _loadData();
   }
 
@@ -158,10 +207,18 @@ class _ListDetailPageState extends State<ListDetailPage> {
                       setState(() {});
                     },
                   ),
-            title: Text(item.title),
-            subtitle: fields.isNotEmpty
+            title: Row(
+              children: [
+                if (list?.roleModelItemId == item.id) ...[
+                  const Icon(Icons.star_rate, size: 16),
+                  const SizedBox(width: 4),
+                ],
+                Text(item.title),
+              ],
+            ),
+            subtitle: item.fields.isNotEmpty
                 ? Text(
-                    fields.map((field) {
+                    item.fields.map((field) {
                       final value = item.fieldValues.firstWhere(
                         (v) => v.fieldId == field.id,
                         orElse: () => ListFieldValue(fieldId: field.id, itemId: item.id),
@@ -172,6 +229,25 @@ class _ListDetailPageState extends State<ListDetailPage> {
                     style: const TextStyle(fontSize: 12),
                   )
                 : null,
+            trailing: PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'rename') {
+                  _showRenameItemDialog(item);
+                } else if (value == 'role') {
+                  _makeRoleModel(item);
+                }
+              },
+              itemBuilder: (context) => <PopupMenuEntry<String>>[
+                const PopupMenuItem(
+                  value: 'rename',
+                  child: Text('Rename Item'),
+                ),
+                const PopupMenuItem(
+                  value: 'role',
+                  child: Text('Make Role Model'),
+                ),
+              ],
+            ),
             onTap: isSelectionMode
                 ? () {
                     setState(() {
@@ -187,7 +263,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
                       context: context,
                       builder: (_) => ItemEditDialog(
                         item: item,
-                        fields: fields,
+                        fields: item.fields,
+                        list: list!,
                         onUpdate: () async {
                           await _loadData();
                         },
@@ -290,7 +367,13 @@ class _ListDetailPageState extends State<ListDetailPage> {
               if (controller.text.trim().isNotEmpty) {
                 // Get current list to preserve folderId and type
                 final lists = await _dbHelper.getLists();
-                final currentList = lists.firstWhere((l) => l.id == widget.listId);
+                AppList? currentList;
+                try {
+                  currentList = lists.firstWhere((l) => l.id == widget.listId);
+                } catch (e) {
+                  currentList = null;
+                }
+                if (currentList == null) return;
                 final updatedList = AppList(
                   id: widget.listId,
                   title: controller.text.trim(),

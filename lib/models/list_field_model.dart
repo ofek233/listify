@@ -4,13 +4,13 @@ class ListField {
   final String id;
   String name;
   ItemFieldType type;
-  final String listId;
+  final String itemId;
 
   ListField({
     required this.id,
     required this.name,
     required this.type,
-    required this.listId,
+    required this.itemId,
   });
 
   Map<String, dynamic> toMap() {
@@ -18,8 +18,22 @@ class ListField {
       'id': id,
       'name': name,
       'type': type.toString().split('.').last,
-      'list_id': listId,
+      'item_id': itemId,
     };
+  }
+
+  ListField copyWith({
+    String? id,
+    String? name,
+    ItemFieldType? type,
+    String? itemId,
+  }) {
+    return ListField(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      type: type ?? this.type,
+      itemId: itemId ?? this.itemId,
+    );
   }
 
   factory ListField.fromMap(Map<String, dynamic> map) {
@@ -29,7 +43,7 @@ class ListField {
       type: ItemFieldType.values.firstWhere(
         (e) => e.toString().split('.').last == map['type'],
       ),
-      listId: map['list_id'],
+      itemId: map['item_id'],
     );
   }
 }

@@ -22,7 +22,7 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    String path = join(await getDatabasesPath(), 'listify.db');
+    String path = join(await getDatabasesPath(), 'listify_v2.db');
     return await openDatabase(
       path,
       version: 1,
@@ -46,6 +46,7 @@ class DatabaseHelper {
         title TEXT NOT NULL,
         folder_id TEXT NOT NULL,
         type TEXT NOT NULL,
+        role_model_item_id TEXT,
         FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE
       )
     ''');
@@ -56,8 +57,8 @@ class DatabaseHelper {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         type TEXT NOT NULL,
-        list_id TEXT NOT NULL,
-        FOREIGN KEY (list_id) REFERENCES lists (id) ON DELETE CASCADE
+        item_id TEXT NOT NULL,
+        FOREIGN KEY (item_id) REFERENCES list_items (id) ON DELETE CASCADE
       )
     ''');
 
@@ -68,6 +69,7 @@ class DatabaseHelper {
         title TEXT NOT NULL,
         completed INTEGER NOT NULL DEFAULT 0,
         list_id TEXT NOT NULL,
+        "order" INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (list_id) REFERENCES lists (id) ON DELETE CASCADE
       )
     ''');
@@ -115,6 +117,13 @@ class DatabaseHelper {
     return maps.map((map) => AppList.fromMap(map)).toList();
   }
 
+  Future<AppList?> getList(String id) async {
+    final db = await database;
+    final maps = await db.query('lists', where: 'id = ?', whereArgs: [id]);
+    if (maps.isEmpty) return null;
+    return AppList.fromMap(maps.first);
+  }
+
   Future<void> insertList(AppList list) async {
     final db = await database;
     await db.insert('lists', list.toMap());
@@ -131,9 +140,9 @@ class DatabaseHelper {
   }
 
   // Field CRUD
-  Future<List<ListField>> getFields(String listId) async {
+  Future<List<ListField>> getFields(String itemId) async {
     final db = await database;
-    final maps = await db.query('list_fields', where: 'list_id = ?', whereArgs: [listId]);
+    final maps = await db.query('list_fields', where: 'item_id = ?', whereArgs: [itemId]);
     return maps.map((map) => ListField.fromMap(map)).toList();
   }
 
@@ -147,20 +156,30 @@ class DatabaseHelper {
     await db.update('list_fields', field.toMap(), where: 'id = ?', whereArgs: [field.id]);
   }
 
-  Future<void> deleteField(String id) async {
+  Future<void> deleteField(String fieldId, String itemId) async {
     final db = await database;
-    await db.delete('list_fields', where: 'id = ?', whereArgs: [id]);
+    await db.delete('list_fields', where: 'id = ? AND item_id = ?', whereArgs: [fieldId, itemId]);
   }
 
   // Item CRUD
   Future<List<ListItemModel>> getItems(String listId) async {
     final db = await database;
-    final maps = await db.query('list_items', where: 'list_id = ?', whereArgs: [listId]);
+    final maps = await db.query('list_items', where: 'list_id = ?', whereArgs: [listId], orderBy: '"order"');
     return maps.map((map) => ListItemModel.fromMap(map)).toList();
+  }
+
+  Future<ListItemModel?> getItem(String id) async {
+    final db = await database;
+    final maps = await db.query('list_items', where: 'id = ?', whereArgs: [id]);
+    if (maps.isEmpty) return null;
+    return ListItemModel.fromMap(maps.first);
   }
 
   Future<void> insertItem(ListItemModel item) async {
     final db = await database;
+    final result = await db.rawQuery('SELECT MAX("order") as max_order FROM list_items WHERE list_id = ?', [item.listId]);
+    final maxOrder = result.first['max_order'] as int? ?? -1;
+    item.order = maxOrder + 1;
     await db.insert('list_items', item.toMap());
   }
 
@@ -198,26 +217,30 @@ class DatabaseHelper {
   // Helper to get items with fields and values
   Future<List<ListItemModel>> getItemsWithDetails(String listId) async {
     final items = await getItems(listId);
-    final fields = await getFields(listId);
 
     for (final item in items) {
-      item.fields = fields;
+      item.fields = await getFields(item.id);
       item.fieldValues = await getFieldValues(item.id);
       for (final value in item.fieldValues) {
-        final field = fields.firstWhere((f) => f.id == value.fieldId);
-        switch (field.type) {
-          case ItemFieldType.shortText:
-            value.value = value.value?.toString() ?? '';
-            break;
-          case ItemFieldType.number:
-            value.value = int.tryParse(value.value?.toString() ?? '0') ?? 0;
-            break;
-          case ItemFieldType.yesNo:
-            value.value = value.value?.toString().toLowerCase() == 'true';
-            break;
-          case ItemFieldType.date:
-            value.value = DateTime.tryParse(value.value?.toString() ?? '');
-            break;
+        final matching = item.fields.where((f) => f.id == value.fieldId);
+        if (matching.isNotEmpty) {
+          final field = matching.first;
+          switch (field.type) {
+            case ItemFieldType.shortText:
+              value.value = value.value?.toString() ?? '';
+              break;
+            case ItemFieldType.number:
+              value.value = int.tryParse(value.value?.toString() ?? '0') ?? 0;
+              break;
+            case ItemFieldType.yesNo:
+              value.value = value.value?.toString().toLowerCase() == 'true';
+              break;
+            case ItemFieldType.date:
+              value.value = DateTime.tryParse(value.value?.toString() ?? '');
+              break;
+            default:
+              break;
+          }
         }
       }
     }
@@ -230,7 +253,7 @@ class DatabaseHelper {
     final db = await database;
     await db.transaction((txn) async {
       for (final item in items) {
-        final newItemId = DateTime.now().millisecondsSinceEpoch.toString() + '_' + item.id;
+        final newItemId = '${DateTime.now().millisecondsSinceEpoch}_${item.id}';
         final newItem = ListItemModel(
           id: newItemId,
           title: item.title,
@@ -271,5 +294,32 @@ class DatabaseHelper {
         }
       }
     }
+  }
+
+  // Apply role model fields to all items in the list
+  Future<void> applyRoleModelFields(String listId, String roleItemId) async {
+    final allItems = await getItemsWithDetails(listId);
+    ListItemModel? roleItem;
+    try {
+      roleItem = allItems.firstWhere((i) => i.id == roleItemId);
+    } catch (e) {
+      roleItem = null;
+    }
+    if (roleItem == null) return;
+    for (final item in allItems.where((i) => i.id != roleItemId)) {
+      for (final field in roleItem.fields) {
+        final existing = item.fields.where((f) => f.name == field.name && f.type == field.type);
+        if (existing.isEmpty) {
+          final newField = field.copyWith(id: DateTime.now().millisecondsSinceEpoch.toString(), itemId: item.id);
+          await insertField(newField);
+          await insertOrUpdateFieldValue(ListFieldValue(fieldId: newField.id, itemId: item.id, value: null));
+        }
+      }
+    }
+  }
+
+  Future<void> updateItemsOrder(String listId, String roleItemId) async {
+    final db = await database;
+    await db.rawUpdate('UPDATE list_items SET "order" = "order" + 1 WHERE list_id = ? AND id != ?', [listId, roleItemId]);
   }
 }

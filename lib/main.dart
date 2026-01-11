@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'pages/home_page.dart';
 import 'database_helper.dart';
 import 'models/folder_model.dart';
@@ -8,7 +9,9 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
+  if (!kIsWeb) {
+    sqfliteFfiInit();
+  }
   databaseFactory = databaseFactoryFfi;
   try {
     await _initializeDatabase();

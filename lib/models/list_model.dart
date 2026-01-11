@@ -5,12 +5,14 @@ class AppList {
   final String title;
   final String folderId;
   final ListType type;
+  final String? roleModelItemId;
 
   AppList({
     required this.id,
     required this.title,
     required this.folderId,
     this.type = ListType.regular,
+    this.roleModelItemId,
   });
 
   Map<String, dynamic> toMap() {
@@ -19,7 +21,24 @@ class AppList {
       'title': title,
       'folder_id': folderId,
       'type': type.toString().split('.').last,
+      'role_model_item_id': roleModelItemId,
     };
+  }
+
+  AppList copyWith({
+    String? id,
+    String? title,
+    String? folderId,
+    ListType? type,
+    String? roleModelItemId,
+  }) {
+    return AppList(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      folderId: folderId ?? this.folderId,
+      type: type ?? this.type,
+      roleModelItemId: roleModelItemId ?? this.roleModelItemId,
+    );
   }
 
   factory AppList.fromMap(Map<String, dynamic> map) {
@@ -31,6 +50,7 @@ class AppList {
         (e) => e.toString().split('.').last == map['type'],
         orElse: () => ListType.regular,
       ),
+      roleModelItemId: map['role_model_item_id'],
     );
   }
 }
