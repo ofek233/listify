@@ -27,6 +27,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
   bool isSelectionMode = false;
   Set<String> selectedItems = <String>{};
   List<ListItemModel>? copiedItems;
+  DateTime currentDate = DateTime.now();
 
   @override
   void initState() {
@@ -37,6 +38,14 @@ class _ListDetailPageState extends State<ListDetailPage> {
   Future<void> _loadData() async {
     list = await _dbHelper.getList(widget.listId);
     items = await _dbHelper.getItemsWithDetails(widget.listId);
+    
+    // For date-bound lists, load completion status for current date
+    if (list?.type == ListType.dateBoundPersistent) {
+      for (final item in items) {
+        item.completed = await _dbHelper.getItemCompletionForDate(item.id, currentDate);
+      }
+    }
+    
     setState(() {});
   }
 
@@ -122,9 +131,88 @@ class _ListDetailPageState extends State<ListDetailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            Expanded(child: Text(widget.title)),
+        title: list?.type == ListType.dateBoundPersistent
+            ? Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left),
+                    onPressed: () {
+                      setState(() {
+                        currentDate = currentDate.subtract(const Duration(days: 1));
+                      });
+                      _loadData();
+                    },
+                  ),
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: currentDate,
+                          firstDate: DateTime.now().subtract(const Duration(days: 730)), // 2 years ago
+                          lastDate: DateTime.now().add(const Duration(days: 365)), // 1 year ahead
+                        );
+                        if (picked != null) {
+                          setState(() {
+                            currentDate = picked;
+                          });
+                          _loadData();
+                        }
+                      },
+                      child: Text(
+                        '${currentDate.month}/${currentDate.day}/${currentDate.year}',
+                        style: const TextStyle(color: Color.fromARGB(255, 23, 20, 228), fontSize: 16),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right),
+                    onPressed: () {
+                      setState(() {
+                        currentDate = currentDate.add(const Duration(days: 1));
+                      });
+                      _loadData();
+                    },
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(child: Text(widget.title)),
+                  PopupMenuButton<String>(
+                    onSelected: (value) async {
+                      if (value == 'rename') {
+                        _showRenameListDialog();
+                      } else if (value == 'select') {
+                        setState(() {
+                          isSelectionMode = !isSelectionMode;
+                          selectedItems.clear();
+                        });
+                      } else if (value == 'paste' && copiedItems != null) {
+                        await _dbHelper.copyItems(copiedItems!, widget.listId);
+                        await _loadData();
+                      }
+                    },
+                    itemBuilder: (context) => <PopupMenuEntry<String>>[
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Rename List'),
+                      ),
+                      PopupMenuItem(
+                        value: 'select',
+                        child: Text(isSelectionMode ? 'Cancel Selection' : 'Select Items'),
+                      ),
+                      if (copiedItems != null)
+                        const PopupMenuItem(
+                          value: 'paste',
+                          child: Text('Paste Items'),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+        actions: [
+          if (list?.type == ListType.dateBoundPersistent)
             PopupMenuButton<String>(
               onSelected: (value) async {
                 if (value == 'rename') {
@@ -155,30 +243,29 @@ class _ListDetailPageState extends State<ListDetailPage> {
                   ),
               ],
             ),
+          if (isSelectionMode) ...[
+            IconButton(
+              icon: const Icon(Icons.select_all),
+              onPressed: () {
+                setState(() {
+                  if (selectedItems.length == items.length) {
+                    selectedItems.clear();
+                  } else {
+                    selectedItems = items.map((item) => item.id).toSet();
+                  }
+                });
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: selectedItems.isNotEmpty ? _deleteSelectedItems : null,
+            ),
+            IconButton(
+              icon: const Icon(Icons.copy),
+              onPressed: selectedItems.isNotEmpty ? _copySelectedItems : null,
+            ),
           ],
-        ),
-        actions: isSelectionMode ? [
-          IconButton(
-            icon: const Icon(Icons.select_all),
-            onPressed: () {
-              setState(() {
-                if (selectedItems.length == items.length) {
-                  selectedItems.clear();
-                } else {
-                  selectedItems = items.map((item) => item.id).toSet();
-                }
-              });
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete),
-            onPressed: selectedItems.isNotEmpty ? _deleteSelectedItems : null,
-          ),
-          IconButton(
-            icon: const Icon(Icons.copy),
-            onPressed: selectedItems.isNotEmpty ? _copySelectedItems : null,
-          ),
-        ] : null,
+        ],
       ),
       body: ListView.builder(
         itemCount: items.length,
@@ -203,7 +290,11 @@ class _ListDetailPageState extends State<ListDetailPage> {
                     value: item.completed,
                     onChanged: (val) async {
                       item.completed = val ?? false;
-                      await _dbHelper.updateItem(item);
+                      if (list?.type == ListType.dateBoundPersistent) {
+                        await _dbHelper.setItemCompletionForDate(item.id, currentDate, item.completed);
+                      } else {
+                        await _dbHelper.updateItem(item);
+                      }
                       setState(() {});
                     },
                   ),

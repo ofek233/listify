@@ -21,6 +21,7 @@ class CreateListDialog extends StatefulWidget {
 class _CreateListDialogState extends State<CreateListDialog> {
   final TextEditingController _titleController = TextEditingController();
   late Folder selectedFolder;
+  ListType selectedType = ListType.regular;
 
   @override
   void initState() {
@@ -35,7 +36,7 @@ class _CreateListDialogState extends State<CreateListDialog> {
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       title: _titleController.text.trim(),
       folderId: selectedFolder.id,
-      type: ListType.regular,
+      type: selectedType,
     );
 
     await DatabaseHelper().insertList(newList);
@@ -50,6 +51,32 @@ class _CreateListDialogState extends State<CreateListDialog> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          DropdownButtonFormField<ListType>(
+            value: selectedType,
+            items: [
+              DropdownMenuItem(
+                value: ListType.regular,
+                child: const Text('Standard list'),
+              ),
+              DropdownMenuItem(
+                value: ListType.dateBoundPersistent,
+                child: const Text('Daily tracker'),
+              ),
+              DropdownMenuItem(
+                value: ListType.recurring,
+                child: const Text('Recurring timer'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value != null) {
+                setState(() => selectedType = value);
+              }
+            },
+            decoration: const InputDecoration(
+              labelText: 'List type',
+            ),
+          ),
+          const SizedBox(height: 16),
           TextField(
             controller: _titleController,
             decoration: const InputDecoration(

@@ -25,13 +25,29 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'listify_v2.db');
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add item_completions table
+      await db.execute('''
+        CREATE TABLE item_completions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          item_id TEXT NOT NULL,
+          date TEXT NOT NULL,
+          completed INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY (item_id) REFERENCES list_items (id) ON DELETE CASCADE,
+          UNIQUE(item_id, date)
+        )
+      ''');
+    }
+  }
+
   Future<void> _onCreate(Database db, int version) async {
-    // Create folders table
     await db.execute('''
       CREATE TABLE folders (
         id TEXT PRIMARY KEY,
@@ -84,6 +100,18 @@ class DatabaseHelper {
         FOREIGN KEY (field_id) REFERENCES list_fields (id) ON DELETE CASCADE,
         FOREIGN KEY (item_id) REFERENCES list_items (id) ON DELETE CASCADE,
         UNIQUE(field_id, item_id)
+      )
+    ''');
+
+    // Create item_completions table for date-bound lists
+    await db.execute('''
+      CREATE TABLE item_completions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (item_id) REFERENCES list_items (id) ON DELETE CASCADE,
+        UNIQUE(item_id, date)
       )
     ''');
   }
@@ -321,5 +349,34 @@ class DatabaseHelper {
   Future<void> updateItemsOrder(String listId, String roleItemId) async {
     final db = await database;
     await db.rawUpdate('UPDATE list_items SET "order" = "order" + 1 WHERE list_id = ? AND id != ?', [listId, roleItemId]);
+  }
+
+  // Item completion per date methods
+  Future<bool> getItemCompletionForDate(String itemId, DateTime date) async {
+    final db = await database;
+    final dateStr = date.toIso8601String().split('T')[0]; // YYYY-MM-DD format
+    final maps = await db.query(
+      'item_completions',
+      where: 'item_id = ? AND date = ?',
+      whereArgs: [itemId, dateStr],
+    );
+    if (maps.isNotEmpty) {
+      return maps.first['completed'] == 1;
+    }
+    return false; // Default to false if no record
+  }
+
+  Future<void> setItemCompletionForDate(String itemId, DateTime date, bool completed) async {
+    final db = await database;
+    final dateStr = date.toIso8601String().split('T')[0]; // YYYY-MM-DD format
+    await db.insert(
+      'item_completions',
+      {
+        'item_id': itemId,
+        'date': dateStr,
+        'completed': completed ? 1 : 0,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 }
