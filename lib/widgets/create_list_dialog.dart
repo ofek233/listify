@@ -3,6 +3,7 @@ import '../models/folder_model.dart';
 import '../models/list_model.dart';
 import '../models/list_type.dart';
 import '../database_helper.dart';
+import 'recurring_timer_setup_dialog.dart';
 
 class CreateListDialog extends StatefulWidget {
   final List<Folder> folders;
@@ -32,16 +33,33 @@ class _CreateListDialogState extends State<CreateListDialog> {
   void _createList() async {
     if (_titleController.text.trim().isEmpty) return;
 
-    final newList = AppList(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: _titleController.text.trim(),
-      folderId: selectedFolder.id,
-      type: selectedType,
-    );
+    if (selectedType == ListType.recurring) {
+      // Show recurring timer setup dialog
+      showDialog(
+        context: context,
+        builder: (_) => RecurringTimerSetupDialog(
+          listTitle: _titleController.text.trim(),
+          onCreate: (list) async {
+            final completeList = list.copyWith(folderId: selectedFolder.id);
+            await DatabaseHelper().insertList(completeList);
+            await widget.onCreate(completeList);
+            Navigator.pop(context); // Close setup dialog
+          },
+        ),
+      );
+    } else {
+      // Create regular or daily tracker list
+      final newList = AppList(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: _titleController.text.trim(),
+        folderId: selectedFolder.id,
+        type: selectedType,
+      );
 
-    await DatabaseHelper().insertList(newList);
-    await widget.onCreate(newList);
-    Navigator.pop(context);
+      await DatabaseHelper().insertList(newList);
+      await widget.onCreate(newList);
+      Navigator.pop(context);
+    }
   }
 
   @override
@@ -52,7 +70,7 @@ class _CreateListDialogState extends State<CreateListDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           DropdownButtonFormField<ListType>(
-            value: selectedType,
+            initialValue: selectedType,
             items: [
               DropdownMenuItem(
                 value: ListType.regular,

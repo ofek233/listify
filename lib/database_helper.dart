@@ -25,7 +25,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'listify_v2.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -44,6 +44,13 @@ class DatabaseHelper {
           UNIQUE(item_id, date)
         )
       ''');
+    }
+    if (oldVersion < 3) {
+      // Add recurring timer columns to lists table
+      await db.execute('ALTER TABLE lists ADD COLUMN due_date TEXT');
+      await db.execute('ALTER TABLE lists ADD COLUMN is_repeating INTEGER DEFAULT 0');
+      await db.execute('ALTER TABLE lists ADD COLUMN repeat_interval TEXT');
+      await db.execute('ALTER TABLE lists ADD COLUMN save_items_between_cycles INTEGER DEFAULT 0');
     }
   }
 

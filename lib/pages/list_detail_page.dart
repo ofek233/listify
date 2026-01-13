@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../models/list_item_model.dart';
 import '../models/list_field_model.dart';
 import '../models/list_field_value_model.dart';
@@ -28,11 +29,24 @@ class _ListDetailPageState extends State<ListDetailPage> {
   Set<String> selectedItems = <String>{};
   List<ListItemModel>? copiedItems;
   DateTime currentDate = DateTime.now();
+  Timer? _countdownTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    // Update countdown every minute
+    _countdownTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (list?.type == ListType.recurring) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -43,6 +57,51 @@ class _ListDetailPageState extends State<ListDetailPage> {
     if (list?.type == ListType.dateBoundPersistent) {
       for (final item in items) {
         item.completed = await _dbHelper.getItemCompletionForDate(item.id, currentDate);
+      }
+    }
+
+    // Handle recurring timer cycle completion
+    if (list?.type == ListType.recurring && list?.dueDate != null) {
+      final now = DateTime.now();
+      DateTime currentDueDate = list!.dueDate!;
+
+      // If repeating and due date has passed, advance to next cycle
+      if (list!.isRepeating == true && currentDueDate.isBefore(now)) {
+        while (currentDueDate.isBefore(now)) {
+          switch (list!.repeatInterval) {
+            case RepeatInterval.day:
+              currentDueDate = currentDueDate.add(const Duration(days: 1));
+              break;
+            case RepeatInterval.week:
+              currentDueDate = currentDueDate.add(const Duration(days: 7));
+              break;
+            case RepeatInterval.month:
+              currentDueDate = DateTime(
+                currentDueDate.year,
+                currentDueDate.month + 1,
+                currentDueDate.day,
+              );
+              break;
+            default:
+              break;
+          }
+        }
+
+        // Update the list with new due date
+        final updatedList = list!.copyWith(dueDate: currentDueDate);
+        await _dbHelper.updateList(updatedList);
+        list = updatedList;
+
+        // Reset items if not saving between cycles
+        if (list!.saveItemsBetweenCycles != true) {
+          for (final item in items) {
+            if (item.completed) {
+              item.completed = false;
+              await _dbHelper.updateItem(item);
+            }
+          }
+          items = await _dbHelper.getItemsWithDetails(widget.listId);
+        }
       }
     }
     
@@ -125,6 +184,101 @@ class _ListDetailPageState extends State<ListDetailPage> {
       default:
         return value!.value.toString();
     }
+  }
+
+  String _getCountdownText() {
+    if (list?.type != ListType.recurring || list?.dueDate == null) return '';
+
+    DateTime nextDueDate = list!.dueDate!;
+    final now = DateTime.now();
+
+    // If repeating and due date has passed, calculate next cycle
+    if (list!.isRepeating == true && nextDueDate.isBefore(now)) {
+      while (nextDueDate.isBefore(now)) {
+        switch (list!.repeatInterval) {
+          case RepeatInterval.day:
+            nextDueDate = nextDueDate.add(const Duration(days: 1));
+            break;
+          case RepeatInterval.week:
+            nextDueDate = nextDueDate.add(const Duration(days: 7));
+            break;
+          case RepeatInterval.month:
+            nextDueDate = DateTime(
+              nextDueDate.year,
+              nextDueDate.month + 1,
+              nextDueDate.day,
+            );
+            break;
+          default:
+            break;
+        }
+      }
+    }
+
+    final difference = nextDueDate.difference(now);
+
+    if (difference.isNegative) {
+      return 'Overdue';
+    }
+
+    final days = difference.inDays;
+    final hours = difference.inHours % 24;
+    final minutes = difference.inMinutes % 60;
+
+    if (days > 0) {
+      return '$days days, $hours hours remaining';
+    } else if (hours > 0) {
+      return '$hours hours, $minutes minutes remaining';
+    } else {
+      return '$minutes minutes remaining';
+    }
+  }
+
+  void _showRenameListDialog() {
+    final controller = TextEditingController(text: widget.title);
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Rename List'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'List name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (controller.text.trim().isNotEmpty) {
+                // Get current list to preserve folderId and type
+                final lists = await _dbHelper.getLists();
+                AppList? currentList;
+                try {
+                  currentList = lists.firstWhere((l) => l.id == widget.listId);
+                } catch (e) {
+                  currentList = null;
+                }
+                if (currentList == null) return;
+                final updatedList = AppList(
+                  id: widget.listId,
+                  title: controller.text.trim(),
+                  folderId: currentList.folderId,
+                  type: currentList.type,
+                );
+                await _dbHelper.updateList(updatedList);
+                Navigator.pop(context);
+                // Navigate back to refresh title
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -211,159 +365,148 @@ class _ListDetailPageState extends State<ListDetailPage> {
                   ),
                 ],
               ),
-        actions: [
-          if (list?.type == ListType.dateBoundPersistent)
-            PopupMenuButton<String>(
-              onSelected: (value) async {
-                if (value == 'rename') {
-                  _showRenameListDialog();
-                } else if (value == 'select') {
-                  setState(() {
-                    isSelectionMode = !isSelectionMode;
-                    selectedItems.clear();
-                  });
-                } else if (value == 'paste' && copiedItems != null) {
-                  await _dbHelper.copyItems(copiedItems!, widget.listId);
-                  await _loadData();
-                }
-              },
-              itemBuilder: (context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem(
-                  value: 'rename',
-                  child: Text('Rename List'),
-                ),
-                PopupMenuItem(
-                  value: 'select',
-                  child: Text(isSelectionMode ? 'Cancel Selection' : 'Select Items'),
-                ),
-                if (copiedItems != null)
-                  const PopupMenuItem(
-                    value: 'paste',
-                    child: Text('Paste Items'),
+        actions: null,
+      ),
+      body: Column(
+        children: [
+          if (list?.type == ListType.recurring) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              child: Column(
+                children: [
+                  Text(
+                    'Time Remaining',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(context).primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-              ],
-            ),
-          if (isSelectionMode) ...[
-            IconButton(
-              icon: const Icon(Icons.select_all),
-              onPressed: () {
-                setState(() {
-                  if (selectedItems.length == items.length) {
-                    selectedItems.clear();
-                  } else {
-                    selectedItems = items.map((item) => item.id).toSet();
-                  }
-                });
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete),
-              onPressed: selectedItems.isNotEmpty ? _deleteSelectedItems : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.copy),
-              onPressed: selectedItems.isNotEmpty ? _copySelectedItems : null,
+                  const SizedBox(height: 4),
+                  Text(
+                    _getCountdownText(),
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: Theme.of(context).primaryColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (list?.isRepeating == true) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Repeats every ${list!.repeatInterval.toString().split('.').last}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).primaryColor.withOpacity(0.7),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
-        ],
-      ),
-      body: ListView.builder(
-        itemCount: items.length,
-        itemBuilder: (_, index) {
-          final item = items[index];
-
-          return ListTile(
-            leading: isSelectionMode
-                ? Checkbox(
-                    value: selectedItems.contains(item.id),
-                    onChanged: (val) {
-                      setState(() {
-                        if (val == true) {
-                          selectedItems.add(item.id);
-                        } else {
-                          selectedItems.remove(item.id);
-                        }
-                      });
-                    },
-                  )
-                : Checkbox(
-                    value: item.completed,
-                    onChanged: (val) async {
-                      item.completed = val ?? false;
-                      if (list?.type == ListType.dateBoundPersistent) {
-                        await _dbHelper.setItemCompletionForDate(item.id, currentDate, item.completed);
-                      } else {
-                        await _dbHelper.updateItem(item);
-                      }
-                      setState(() {});
-                    },
+          Expanded(
+            child: ListView.builder(
+              itemCount: items.length,
+              itemBuilder: (_, index) {
+                final item = items[index];
+                return ListTile(
+                  leading: isSelectionMode
+                      ? Checkbox(
+                          value: selectedItems.contains(item.id),
+                          onChanged: (val) {
+                            setState(() {
+                              if (val == true) {
+                                selectedItems.add(item.id);
+                              } else {
+                                selectedItems.remove(item.id);
+                              }
+                            });
+                          },
+                        )
+                      : Checkbox(
+                          value: item.completed,
+                          onChanged: (val) async {
+                            item.completed = val ?? false;
+                            if (list?.type == ListType.dateBoundPersistent) {
+                              await _dbHelper.setItemCompletionForDate(item.id, currentDate, item.completed);
+                            } else {
+                              await _dbHelper.updateItem(item);
+                            }
+                            setState(() {});
+                          },
+                        ),
+                  title: Row(
+                    children: [
+                      if (list?.roleModelItemId == item.id) ...[
+                        const Icon(Icons.star_rate, size: 16),
+                        const SizedBox(width: 4),
+                      ],
+                      Text(item.title),
+                    ],
                   ),
-            title: Row(
-              children: [
-                if (list?.roleModelItemId == item.id) ...[
-                  const Icon(Icons.star_rate, size: 16),
-                  const SizedBox(width: 4),
-                ],
-                Text(item.title),
-              ],
-            ),
-            subtitle: item.fields.isNotEmpty
-                ? Text(
-                    item.fields.map((field) {
-                      final value = item.fieldValues.firstWhere(
-                        (v) => v.fieldId == field.id,
-                        orElse: () => ListFieldValue(fieldId: field.id, itemId: item.id),
-                      );
-                      final displayValue = _getFieldDisplayValue(field, value.value != null ? value : null);
-                      return displayValue.isNotEmpty ? '${field.name}: $displayValue' : null;
-                    }).where((s) => s != null).join(', '),
-                    style: const TextStyle(fontSize: 12),
-                  )
-                : null,
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'rename') {
-                  _showRenameItemDialog(item);
-                } else if (value == 'role') {
-                  _makeRoleModel(item);
-                }
-              },
-              itemBuilder: (context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem(
-                  value: 'rename',
-                  child: Text('Rename Item'),
-                ),
-                const PopupMenuItem(
-                  value: 'role',
-                  child: Text('Make Role Model'),
-                ),
-              ],
-            ),
-            onTap: isSelectionMode
-                ? () {
-                    setState(() {
-                      if (selectedItems.contains(item.id)) {
-                        selectedItems.remove(item.id);
-                      } else {
-                        selectedItems.add(item.id);
+                  subtitle: item.fields.isNotEmpty
+                      ? Text(
+                          item.fields.map((field) {
+                            final value = item.fieldValues.firstWhere(
+                              (v) => v.fieldId == field.id,
+                              orElse: () => ListFieldValue(fieldId: field.id, itemId: item.id),
+                            );
+                            final displayValue = _getFieldDisplayValue(field, value.value != null ? value : null);
+                            return displayValue.isNotEmpty ? '${field.name}: $displayValue' : null;
+                          }).where((s) => s != null).join(', '),
+                          style: const TextStyle(fontSize: 12),
+                        )
+                      : null,
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'rename') {
+                        _showRenameItemDialog(item);
+                      } else if (value == 'role') {
+                        _makeRoleModel(item);
                       }
-                    });
-                  }
-                : () {
-                    showDialog(
-                      context: context,
-                      builder: (_) => ItemEditDialog(
-                        item: item,
-                        fields: item.fields,
-                        list: list!,
-                        onUpdate: () async {
-                          await _loadData();
-                        },
+                    },
+                    itemBuilder: (context) => <PopupMenuEntry<String>>[
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Rename Item'),
                       ),
-                    );
-                  },
-          );
-        },
+                      const PopupMenuItem(
+                        value: 'role',
+                        child: Text('Make Role Model'),
+                      ),
+                    ],
+                  ),
+                  onTap: isSelectionMode
+                      ? () {
+                          setState(() {
+                            if (selectedItems.contains(item.id)) {
+                              selectedItems.remove(item.id);
+                            } else {
+                              selectedItems.add(item.id);
+                            }
+                          });
+                        }
+                      : () {
+                          showDialog(
+                            context: context,
+                            builder: (_) => ItemEditDialog(
+                              item: item,
+                              fields: item.fields,
+                              list: list!,
+                              onUpdate: () async {
+                                await _loadData();
+                              },
+                            ),
+                          );
+                        },
+                );
+              },
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
@@ -376,8 +519,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                 content: TextField(
                   controller: controller,
                   autofocus: true,
-                  decoration:
-                      const InputDecoration(labelText: 'Item name'),
+                  decoration: const InputDecoration(labelText: 'Item name'),
                 ),
                 actions: [
                   TextButton(
@@ -398,108 +540,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
             },
           );
         },
+        child: const Icon(Icons.add),
       ),
-      // floatingActionButton: FloatingActionButton(
-      //   child: const Icon(Icons.add),
-      //   onPressed: () {
-      //     showDialog(
-      //       context: context,
-      //       builder: (_) {
-      //         final controller = TextEditingController();
-      //         return AlertDialog(
-      //           title: const Text('Add Item'),
-      //           content: TextField(
-      //             controller: controller,
-      //             autofocus: true,
-      //             decoration:
-      //                 const InputDecoration(labelText: 'Item name'),
-      //           ),
-      //           actions: [
-      //             TextButton(
-      //               onPressed: () => Navigator.pop(context),
-      //               child: const Text('Cancel'),
-      //             ),
-      //             ElevatedButton(
-      //               onPressed: () {
-      //                 if (controller.text.trim().isNotEmpty) {
-      //                   _addItem(controller.text.trim());
-      //                   Navigator.pop(context);
-      //                 }
-      //               },
-      //               child: const Text('Add'),
-      //             ),
-      //           ],
-      //         );
-      //       },
-      //     );
-      //   },
-      // ),
-    );
-  }
-
-  void _showRenameListDialog() {
-    final controller = TextEditingController(text: widget.title);
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Rename List'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'List name'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (controller.text.trim().isNotEmpty) {
-                // Get current list to preserve folderId and type
-                final lists = await _dbHelper.getLists();
-                AppList? currentList;
-                try {
-                  currentList = lists.firstWhere((l) => l.id == widget.listId);
-                } catch (e) {
-                  currentList = null;
-                }
-                if (currentList == null) return;
-                final updatedList = AppList(
-                  id: widget.listId,
-                  title: controller.text.trim(),
-                  folderId: currentList.folderId,
-                  type: currentList.type,
-                );
-                await _dbHelper.updateList(updatedList);
-                Navigator.pop(context);
-                // Navigate back to refresh title
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Rename'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _deleteSelectedItems() async {
-    for (final itemId in selectedItems) {
-      await _dbHelper.deleteItem(itemId);
-    }
-    selectedItems.clear();
-    await _loadData();
-  }
-
-  void _copySelectedItems() {
-    copiedItems = items.where((item) => selectedItems.contains(item.id)).toList();
-    setState(() {
-      isSelectionMode = false;
-      selectedItems.clear();
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Items copied')),
     );
   }
 }
