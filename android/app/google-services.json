@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "325994277971",
+    "project_id": "listify-b624b",
+    "storage_bucket": "listify-b624b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:325994277971:android:3e6520826094f98b016aa6",
+        "android_client_info": {
+          "package_name": "com.example.listify"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "325994277971-4pgteb0lu05jalgl3mosbrc4p9oev6pe.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.listify",
+            "certificate_hash": "0be185ba519ab068c58b66bd6b385919e2d92070"
+          }
+        },
+        {
+          "client_id": "325994277971-u4bpdf0u6lvrne4oc5hv6bphpdkbmdp5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCUaa52MpQ7vv-T9D1KyndknvD4taDLSxo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "325994277971-u4bpdf0u6lvrne4oc5hv6bphpdkbmdp5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

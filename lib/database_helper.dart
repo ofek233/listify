@@ -25,7 +25,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'listify_v2.db');
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -52,6 +52,29 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE lists ADD COLUMN repeat_interval TEXT');
       await db.execute('ALTER TABLE lists ADD COLUMN save_items_between_cycles INTEGER DEFAULT 0');
     }
+    if (oldVersion < 4) {
+      // Ensure all columns exist (in case upgrading from version 3)
+      try {
+        await db.execute('ALTER TABLE lists ADD COLUMN due_date TEXT');
+      } catch (e) {
+        // Column might already exist
+      }
+      try {
+        await db.execute('ALTER TABLE lists ADD COLUMN is_repeating INTEGER DEFAULT 0');
+      } catch (e) {
+        // Column might already exist
+      }
+      try {
+        await db.execute('ALTER TABLE lists ADD COLUMN repeat_interval TEXT');
+      } catch (e) {
+        // Column might already exist
+      }
+      try {
+        await db.execute('ALTER TABLE lists ADD COLUMN save_items_between_cycles INTEGER DEFAULT 0');
+      } catch (e) {
+        // Column might already exist
+      }
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -70,6 +93,10 @@ class DatabaseHelper {
         folder_id TEXT NOT NULL,
         type TEXT NOT NULL,
         role_model_item_id TEXT,
+        due_date TEXT,
+        is_repeating INTEGER DEFAULT 0,
+        repeat_interval TEXT,
+        save_items_between_cycles INTEGER DEFAULT 0,
         FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE
       )
     ''');
@@ -273,8 +300,6 @@ class DatabaseHelper {
             case ItemFieldType.date:
               value.value = DateTime.tryParse(value.value?.toString() ?? '');
               break;
-            default:
-              break;
           }
         }
       }
@@ -312,9 +337,7 @@ class DatabaseHelper {
 
   // Apply role model fields to list
   Future<void> applyRoleModel(String listId, List<String> fieldIds) async {
-    final db = await database;
     final items = await getItems(listId);
-    final existingFields = await getFields(listId);
 
     // Ensure all items have these fields
     for (final item in items) {

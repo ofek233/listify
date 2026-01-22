@@ -116,7 +116,7 @@ class _RecurringTimerSetupDialogState extends State<RecurringTimerSetupDialog> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<RepeatInterval>(
-                value: repeatInterval,
+                initialValue: repeatInterval,
                 items: [
                   DropdownMenuItem(
                     value: RepeatInterval.day,

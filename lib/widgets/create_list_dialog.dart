@@ -3,6 +3,8 @@ import '../models/folder_model.dart';
 import '../models/list_model.dart';
 import '../models/list_type.dart';
 import '../database_helper.dart';
+import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 import 'recurring_timer_setup_dialog.dart';
 
 class CreateListDialog extends StatefulWidget {
@@ -21,6 +23,8 @@ class CreateListDialog extends StatefulWidget {
 
 class _CreateListDialogState extends State<CreateListDialog> {
   final TextEditingController _titleController = TextEditingController();
+  final FirestoreService _firestoreService = FirestoreService();
+  final AuthService _authService = AuthService();
   late Folder selectedFolder;
   ListType selectedType = ListType.regular;
 
@@ -32,6 +36,9 @@ class _CreateListDialogState extends State<CreateListDialog> {
 
   void _createList() async {
     if (_titleController.text.trim().isEmpty) return;
+    
+    final user = _authService.currentUser;
+    if (user == null) return;
 
     if (selectedType == ListType.recurring) {
       // Show recurring timer setup dialog
@@ -41,7 +48,8 @@ class _CreateListDialogState extends State<CreateListDialog> {
           listTitle: _titleController.text.trim(),
           onCreate: (list) async {
             final completeList = list.copyWith(folderId: selectedFolder.id);
-            await DatabaseHelper().insertList(completeList);
+            // Save to Firestore (cloud)
+            await _firestoreService.createList(user.uid, completeList);
             await widget.onCreate(completeList);
             Navigator.pop(context); // Close setup dialog
           },
@@ -56,7 +64,8 @@ class _CreateListDialogState extends State<CreateListDialog> {
         type: selectedType,
       );
 
-      await DatabaseHelper().insertList(newList);
+      // Save to Firestore (cloud)
+      await _firestoreService.createList(user.uid, newList);
       await widget.onCreate(newList);
       Navigator.pop(context);
     }
