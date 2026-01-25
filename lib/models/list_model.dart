@@ -16,6 +16,7 @@ class AppList {
   final bool? isRepeating;
   final RepeatInterval? repeatInterval;
   final bool? saveItemsBetweenCycles;
+  final String? ownerId;
 
   AppList({
     required this.id,
@@ -27,6 +28,7 @@ class AppList {
     this.isRepeating,
     this.repeatInterval,
     this.saveItemsBetweenCycles,
+    this.ownerId,
   });
 
   Map<String, dynamic> toMap() {
@@ -53,6 +55,7 @@ class AppList {
     bool? isRepeating,
     RepeatInterval? repeatInterval,
     bool? saveItemsBetweenCycles,
+    String? ownerId,
   }) {
     return AppList(
       id: id ?? this.id,
@@ -64,6 +67,7 @@ class AppList {
       isRepeating: isRepeating ?? this.isRepeating,
       repeatInterval: repeatInterval ?? this.repeatInterval,
       saveItemsBetweenCycles: saveItemsBetweenCycles ?? this.saveItemsBetweenCycles,
+      ownerId: ownerId ?? this.ownerId,
     );
   }
 

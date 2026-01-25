@@ -65,6 +65,11 @@ class FirestoreService {
           'type': list.type.toString().split('.').last,
           'createdAt': DateTime.now().toIso8601String(),
           'ownerId': userId,
+          'roleModelItemId': list.roleModelItemId,
+          'dueDate': list.dueDate?.toIso8601String(),
+          'isRepeating': list.isRepeating,
+          'repeatInterval': list.repeatInterval?.toString().split('.').last,
+          'saveItemsBetweenCycles': list.saveItemsBetweenCycles,
         });
   }
 
@@ -82,8 +87,45 @@ class FirestoreService {
         title: data['title'],
         folderId: data['folderId'],
         type: _parseListType(data['type']),
+        roleModelItemId: data['roleModelItemId'],
+        dueDate: data['dueDate'] != null ? DateTime.tryParse(data['dueDate']) : null,
+        isRepeating: data['isRepeating'] as bool?,
+        repeatInterval: _parseRepeatInterval(data['repeatInterval']),
+        saveItemsBetweenCycles: data['saveItemsBetweenCycles'] as bool?,
+        ownerId: data['ownerId'] ?? userId,
       );
     }).toList();
+  }
+
+  // Get a single list by ID from a specific user's collection
+  Future<AppList?> getList(String userId, String listId) async {
+    try {
+      final doc = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('lists')
+          .doc(listId)
+          .get();
+
+      if (!doc.exists) return null;
+
+      final data = doc.data()!;
+      return AppList(
+        id: doc.id,
+        title: data['title'],
+        folderId: data['folderId'],
+        type: _parseListType(data['type']),
+        roleModelItemId: data['roleModelItemId'],
+        dueDate: data['dueDate'] != null ? DateTime.tryParse(data['dueDate']) : null,
+        isRepeating: data['isRepeating'] as bool?,
+        repeatInterval: _parseRepeatInterval(data['repeatInterval']),
+        saveItemsBetweenCycles: data['saveItemsBetweenCycles'] as bool?,
+        ownerId: data['ownerId'] ?? userId,
+      );
+    } catch (e) {
+      print('Error getting list: $e');
+      return null;
+    }
   }
 
   ListType _parseListType(String? typeString) {
@@ -108,7 +150,24 @@ class FirestoreService {
           'title': list.title,
           'folderId': list.folderId,
           'type': list.type.toString().split('.').last,
+          'roleModelItemId': list.roleModelItemId,
+          'dueDate': list.dueDate?.toIso8601String(),
+          'isRepeating': list.isRepeating,
+          'repeatInterval': list.repeatInterval?.toString().split('.').last,
+          'saveItemsBetweenCycles': list.saveItemsBetweenCycles,
         });
+  }
+
+  RepeatInterval? _parseRepeatInterval(String? value) {
+    if (value == null) return null;
+    try {
+      return RepeatInterval.values.firstWhere(
+        (e) => e.toString().split('.').last == value,
+        orElse: () => RepeatInterval.day,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> deleteList(String userId, String listId) async {
@@ -129,7 +188,8 @@ class FirestoreService {
     required String targetEmail,
     required ShareRole role,
   }) async {
-    final shareId = _firestore.collection('shares').doc().id;
+    // Use deterministic ID so security rules can reference it
+    final shareId = '${listId}_$targetUserId';
 
     await _firestore.collection('shares').doc(shareId).set({
       'listId': listId,
@@ -147,9 +207,22 @@ class FirestoreService {
         .where('sharedWithUserId', isEqualTo: userId)
         .get();
 
-    return snapshot.docs
-        .map((doc) => ListShare.fromMap(doc.data(), doc.id))
-        .toList();
+    // Ensure deterministic share IDs for rules (listId_sharedWithUserId)
+    final shares = <ListShare>[];
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final share = ListShare.fromMap(data, doc.id);
+      final expectedId = '${share.listId}_${share.sharedWithUserId}';
+
+      // If the doc ID is not deterministic, create/update the deterministic doc
+      if (doc.id != expectedId) {
+        await _firestore.collection('shares').doc(expectedId).set(data, SetOptions(merge: true));
+      }
+
+      shares.add(ListShare.fromMap(data, expectedId));
+    }
+
+    return shares;
   }
 
   Future<List<ListShare>> getListShares(String listId) async {
@@ -158,9 +231,20 @@ class FirestoreService {
         .where('listId', isEqualTo: listId)
         .get();
 
-    return snapshot.docs
-        .map((doc) => ListShare.fromMap(doc.data(), doc.id))
-        .toList();
+    final shares = <ListShare>[];
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final share = ListShare.fromMap(data, doc.id);
+      final expectedId = '${share.listId}_${share.sharedWithUserId}';
+
+      if (doc.id != expectedId) {
+        await _firestore.collection('shares').doc(expectedId).set(data, SetOptions(merge: true));
+      }
+
+      shares.add(ListShare.fromMap(data, expectedId));
+    }
+
+    return shares;
   }
 
   Future<void> updateShareRole({
@@ -237,6 +321,19 @@ class FirestoreService {
       }
       return null;
     } catch (e) {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getUserInfo(String userId) async {
+    try {
+      final doc = await _firestore.collection('users').doc(userId).get();
+      if (doc.exists) {
+        return doc.data();
+      }
+      return null;
+    } catch (e) {
+      print('Error getting user info: $e');
       return null;
     }
   }

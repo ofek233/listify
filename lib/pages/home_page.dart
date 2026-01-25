@@ -52,6 +52,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
       final user = _authService.currentUser;
@@ -61,10 +62,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         lists = await _firestoreService.getUserLists(user.uid);
         sharedLists = await _firestoreService.getSharedListsForUser(user.uid);
       }
+      if (!mounted) return;
       setState(() {});
     } catch (e) {
       print('Error loading data: $e');
     } finally {
+      if (!mounted) return;
       setState(() => _isLoading = false);
     }
   }
@@ -239,31 +242,62 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       itemCount: sharedLists.length,
       itemBuilder: (context, index) {
         final share = sharedLists[index];
-        return Card(
-          child: ListTile(
-            title: Text(share.listId), // You might want to fetch actual list title
-            subtitle: Text(
-              'Shared by ${share.sharedByUserId} • ${share.role.toString().split('.').last}',
-              style: TextStyle(color: Colors.grey.shade600),
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ListDetailPage(
-                    listId: share.listId,
-                    title: 'Shared List',
-                    isShared: true,
-                    shareRole: share.role,
-                  ),
+        return FutureBuilder<Map<String, dynamic>>(
+          future: _getSharedListInfo(share),
+          builder: (context, snapshot) {
+            final listTitle = snapshot.data?['listTitle'] ?? 'Shared List';
+            final ownerName = snapshot.data?['ownerName'] ?? 'Unknown User';
+            
+            return Card(
+              child: ListTile(
+                title: Text(listTitle),
+                subtitle: Text(
+                  'Shared by $ownerName • ${share.role.toString().split('.').last}',
+                  style: TextStyle(color: Colors.grey.shade600),
                 ),
-              );
-            },
-          ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ListDetailPage(
+                        listId: share.listId,
+                        title: listTitle,
+                        isShared: true,
+                        shareRole: share.role,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            );
+          },
         );
       },
     );
+  }
+
+  Future<Map<String, dynamic>> _getSharedListInfo(ListShare share) async {
+    try {
+      // Get list title from owner's collection
+      final list = await _firestoreService.getList(share.ownerUserId, share.listId);
+      final listTitle = list?.title ?? 'Shared List';
+      
+      // Get owner's display name
+      final ownerDoc = await _firestoreService.getUserInfo(share.ownerUserId);
+      final ownerName = ownerDoc?['displayName'] ?? 'Unknown User';
+      
+      return {
+        'listTitle': listTitle,
+        'ownerName': ownerName,
+      };
+    } catch (e) {
+      print('Error getting shared list info: $e');
+      return {
+        'listTitle': 'Shared List',
+        'ownerName': 'Unknown User',
+      };
+    }
   }
 
   void _showSignOutDialog() {

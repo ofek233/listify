@@ -334,7 +334,7 @@ class _ShareListDialogState extends State<ShareListDialog> {
                             ),
                           ),
                           // Only owner can change roles
-                          if (share.sharedByUserId ==
+                        if (share.ownerUserId ==
                               _authService.currentUser?.uid) ...[
                             DropdownButton<ShareRole>(
                               value: share.role,

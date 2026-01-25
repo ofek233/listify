@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../models/folder_model.dart';
 import '../models/list_model.dart';
 import '../models/list_type.dart';
-import '../database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import 'recurring_timer_setup_dialog.dart';

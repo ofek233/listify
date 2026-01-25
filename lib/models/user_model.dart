@@ -44,7 +44,7 @@ enum ShareRole {
 class ListShare {
   final String id;
   final String listId;
-  final String sharedByUserId;
+  final String ownerUserId;
   final String sharedWithUserId;
   final ShareRole role;
   final DateTime sharedAt;
@@ -53,7 +53,7 @@ class ListShare {
   ListShare({
     required this.id,
     required this.listId,
-    required this.sharedByUserId,
+    required this.ownerUserId,
     required this.sharedWithUserId,
     required this.role,
     required this.sharedAt,
@@ -64,7 +64,7 @@ class ListShare {
     return ListShare(
       id: id,
       listId: map['listId'] ?? '',
-      sharedByUserId: map['sharedByUserId'] ?? '',
+      ownerUserId: map['ownerUserId'] ?? '',
       sharedWithUserId: map['sharedWithUserId'] ?? '',
       role: ShareRole.values.firstWhere(
         (e) => e.toString().split('.').last == map['role'],
@@ -80,7 +80,7 @@ class ListShare {
   Map<String, dynamic> toMap() {
     return {
       'listId': listId,
-      'sharedByUserId': sharedByUserId,
+      'ownerUserId': ownerUserId,
       'sharedWithUserId': sharedWithUserId,
       'role': role.toString().split('.').last,
       'sharedAt': sharedAt.toIso8601String(),

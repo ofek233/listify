@@ -45,6 +45,14 @@ class _ListDetailPageState extends State<ListDetailPage> {
   DateTime currentDate = DateTime.now();
   Timer? _countdownTimer;
 
+  // Check if current user can edit this list
+  bool get canEditList {
+    // Owner always can edit
+    if (!widget.isShared) return true;
+    // For shared lists, only editors and owners can edit (viewers cannot)
+    return widget.shareRole == ShareRole.editor || widget.shareRole == ShareRole.owner;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -72,16 +80,40 @@ class _ListDetailPageState extends State<ListDetailPage> {
       }
 
       // Load list metadata from Firestore
-      final allUserLists = await _firestoreService.getUserLists(user.uid);
-      final firebaseList = allUserLists.firstWhere(
-        (l) => l.id == widget.listId,
-        orElse: () => AppList(
-          id: widget.listId,
-          title: widget.title,
-          folderId: '',
-          type: ListType.regular,
-        ),
-      );
+      AppList? firebaseList;
+      
+      if (widget.isShared) {
+        // For shared lists, get the share info to find the owner
+        final shares = await _firestoreService.getSharedListsForUser(user.uid);
+        final share = shares.firstWhere(
+          (s) => s.listId == widget.listId,
+          orElse: () => throw Exception('Share not found'),
+        );
+        
+        // Load the specific list from the owner's collection
+        firebaseList = await _firestoreService.getList(share.ownerUserId, widget.listId);
+        
+        // If not found, create a default one
+        firebaseList ??= AppList(
+            id: widget.listId,
+            title: widget.title,
+            folderId: '',
+            type: ListType.regular,
+            ownerId: share.ownerUserId,
+          );
+      } else {
+        // For own lists, load from current user's collection
+        firebaseList = await _firestoreService.getList(user.uid, widget.listId);
+        
+        // If not found, create a default one
+        firebaseList ??= AppList(
+            id: widget.listId,
+            title: widget.title,
+            folderId: '',
+            type: ListType.regular,
+            ownerId: user.uid,
+          );
+      }
       
       list = firebaseList;
       
@@ -124,7 +156,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
 
           // Update the list with new due date
           final updatedList = list!.copyWith(dueDate: currentDueDate);
-          await _firestoreService.updateList(user.uid, updatedList);
+          final ownerUserId = list!.ownerId ?? user.uid;
+          await _firestoreService.updateList(ownerUserId, updatedList);
           list = updatedList;
 
           // Reset items if not saving between cycles
@@ -199,8 +232,15 @@ class _ListDetailPageState extends State<ListDetailPage> {
 
   void _makeRoleModel(ListItemModel item) async {
     if (list == null) return;
+    final user = _authService.currentUser;
+    if (user == null) return;
     // Set role model
-    await _dbHelper.updateList(list!.copyWith(roleModelItemId: item.id));
+    final updatedList = list!.copyWith(roleModelItemId: item.id);
+    await _dbHelper.updateList(updatedList);
+    // Update in Firestore using the owner's ID (not current user for shared lists)
+    final ownerUserId = list!.ownerId ?? user.uid;
+    await _firestoreService.updateList(ownerUserId, updatedList);
+    list = updatedList;
     // Apply role model fields to all existing items
     await _dbHelper.applyRoleModelFields(widget.listId, item.id);
     // Set order to 0, shift others
@@ -297,7 +337,9 @@ class _ListDetailPageState extends State<ListDetailPage> {
                 final user = _authService.currentUser;
                 if (user != null) {
                   final updatedList = list!.copyWith(title: controller.text.trim());
-                  await _firestoreService.updateList(user.uid, updatedList);
+                  // Update in Firestore using the owner's ID
+                  final ownerUserId = list!.ownerId ?? user.uid;
+                  await _firestoreService.updateList(ownerUserId, updatedList);
                   list = updatedList;
                   Navigator.pop(context);
                   if (mounted) {
@@ -395,20 +437,21 @@ class _ListDetailPageState extends State<ListDetailPage> {
                       }
                     },
                     itemBuilder: (context) => <PopupMenuEntry<String>>[
-                      const PopupMenuItem(
-                        value: 'rename',
-                        child: Text('Rename List'),
-                      ),
+                      if (canEditList)
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Text('Rename List'),
+                        ),
                       PopupMenuItem(
                         value: 'select',
                         child: Text(isSelectionMode ? 'Cancel Selection' : 'Select Items'),
                       ),
-                      if (copiedItems != null)
+                      if (copiedItems != null && canEditList)
                         const PopupMenuItem(
                           value: 'paste',
                           child: Text('Paste Items'),
                         ),
-                      if (!widget.isShared && list != null) ...[
+                      if (canEditList && (list?.ownerId == _authService.currentUser?.uid || !widget.isShared) && list != null) ...[
                         const PopupMenuDivider(),
                         const PopupMenuItem(
                           value: 'share',
@@ -478,7 +521,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                   leading: isSelectionMode
                       ? Checkbox(
                           value: selectedItems.contains(item.id),
-                          onChanged: (val) {
+                          onChanged: canEditList ? (val) {
                             setState(() {
                               if (val == true) {
                                 selectedItems.add(item.id);
@@ -486,11 +529,11 @@ class _ListDetailPageState extends State<ListDetailPage> {
                                 selectedItems.remove(item.id);
                               }
                             });
-                          },
+                          } : null,
                         )
                       : Checkbox(
                           value: item.completed,
-                          onChanged: (val) async {
+                          onChanged: canEditList ? (val) async {
                             item.completed = val ?? false;
                             if (list?.type == ListType.dateBoundPersistent) {
                               await _dbHelper.setItemCompletionForDate(item.id, currentDate, item.completed);
@@ -498,7 +541,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                               await _dbHelper.updateItem(item);
                             }
                             setState(() {});
-                          },
+                          } : null,
                         ),
                   title: Row(
                     children: [
@@ -522,7 +565,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                           style: const TextStyle(fontSize: 12),
                         )
                       : null,
-                  trailing: PopupMenuButton<String>(
+                  trailing: canEditList ? PopupMenuButton<String>(
                     onSelected: (value) {
                       if (value == 'rename') {
                         _showRenameItemDialog(item);
@@ -540,7 +583,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                         child: Text('Make Role Model'),
                       ),
                     ],
-                  ),
+                  ) : null,
                   onTap: isSelectionMode
                       ? () {
                           setState(() {
@@ -551,7 +594,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                             }
                           });
                         }
-                      : () {
+                      : canEditList ? () {
                           if (list != null) {
                             showDialog(
                               context: context,
@@ -565,14 +608,15 @@ class _ListDetailPageState extends State<ListDetailPage> {
                               ),
                             );
                           }
-                        },
+                        }
+                      : null,
                 );
               },
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: canEditList ? FloatingActionButton(
         onPressed: () {
           showDialog(
             context: context,
@@ -605,7 +649,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
           );
         },
         child: const Icon(Icons.add),
-      ),
+      ) : null,
     );
   }
 }
