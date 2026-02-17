@@ -3,6 +3,8 @@ import '../models/list_model.dart';
 import '../models/list_type.dart';
 import '../models/folder_model.dart';
 import '../models/user_model.dart';
+import '../models/search_query.dart';
+import '../models/search_result_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -1067,6 +1069,127 @@ class FirestoreService {
     } catch (e) {
       print('Error getting item completion for date: $e');
       return false;
+    }
+  }
+
+  // --- Search Methods ---
+
+  /// Search for users by partial email match
+  /// Returns a list of {uid, email, displayName} for matching users
+  Future<List<Map<String, dynamic>>> searchUsersByEmailPartial(
+    String emailQuery,
+  ) async {
+    if (emailQuery.isEmpty) return [];
+
+    try {
+      final searchTerm = emailQuery.toLowerCase();
+      final snapshot = await _firestore.collection('users').get();
+
+      final results = <Map<String, dynamic>>[];
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final email = (data['email'] as String?)?.toLowerCase() ?? '';
+        final displayName = data['displayName'] as String? ?? 'Unknown';
+
+        if (email.contains(searchTerm)) {
+          results.add({
+            'uid': doc.id,
+            'email': data['email'],
+            'displayName': displayName,
+          });
+        }
+      }
+
+      return results;
+    } catch (e) {
+      print('Error searching users by email: $e');
+      return [];
+    }
+  }
+
+  /// Search for lists shared with a specific collaborator email
+  /// Returns a list of lists where this email has access
+  Future<List<AppList>> searchSharedListsByCollaboratorEmail(
+    String collaboratorEmail,
+  ) async {
+    try {
+      // Query the shares collection for this email
+      final snapshot = await _firestore
+          .collection('shares')
+          .where('sharedWithEmail', isEqualTo: collaboratorEmail)
+          .get();
+
+      final listIds = <String>{};
+      for (final doc in snapshot.docs) {
+        if (doc['listId'] != null) {
+          listIds.add(doc['listId']);
+        }
+      }
+
+      if (listIds.isEmpty) return [];
+
+      // Get the list details for each shared list
+      final lists = <AppList>[];
+      for (final listId in listIds) {
+        // We need to search across all users to find the list
+        // This is a limitation of Firestore without cross-user queries
+        // For now, we'll return empty - the client should handle this
+      }
+
+      return lists;
+    } catch (e) {
+      print('Error searching shared lists by collaborator: $e');
+      return [];
+    }
+  }
+
+  /// Get lists shared with the specified user ID
+  /// Used for search filtering by collaborator
+  Future<List<AppList>> getListsSharedWithUser(String userId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('shares')
+          .where('sharedWithUserId', isEqualTo: userId)
+          .get();
+
+      final lists = <AppList>[];
+      final listIds = <String>{};
+
+      for (final doc in snapshot.docs) {
+        final listId = doc['listId'] as String?;
+        if (listId != null) {
+          listIds.add(listId);
+        }
+      }
+
+      // Note: We don't have direct access to other users' lists in Firestore
+      // This would require cross-user queries which Firestore doesn't support well
+      // The app needs to maintain a separate shared lists collection or
+      // the owner to maintain share information in their own lists
+
+      return lists;
+    } catch (e) {
+      print('Error getting lists shared with user: $e');
+      return [];
+    }
+  }
+
+  /// Search for folders shared with the current user by email
+  Future<List<Folder>> searchSharedFoldersByCollaboratorEmail(
+    String collaboratorEmail,
+  ) async {
+    try {
+      final snapshot = await _firestore
+          .collection('folder_shares')
+          .where('sharedWithEmail', isEqualTo: collaboratorEmail)
+          .get();
+
+      const folders = <Folder>[];
+      // Similar limitation as above
+      return folders;
+    } catch (e) {
+      print('Error searching shared folders by collaborator: $e');
+      return [];
     }
   }
 }

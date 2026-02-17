@@ -1,17 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import '../models/folder_model.dart';
 import '../models/list_model.dart';
+import '../models/list_item_model.dart';
 import '../models/user_model.dart';
+import '../models/search_filter_model.dart';
+import '../models/search_result_model.dart';
+import '../models/recent_search.dart';
 import 'list_detail_page.dart';
 import 'settings_page.dart';
 import '../widgets/create_list_dialog.dart';
 import '../widgets/share_folder_dialog.dart';
 import '../widgets/share_list_dialog.dart';
+import '../widgets/search_results_widget.dart';
+import '../widgets/recent_searches_widget.dart';
+import '../widgets/search_filters_sheet.dart';
+import '../widgets/search_bar_widget.dart';
 import '../database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/search_service.dart';
+import '../providers/search_state_provider.dart';
 import 'shared_folder_page.dart';
 import '../utils/theme_provider.dart';
 
@@ -26,6 +37,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late final DatabaseHelper _dbHelper = !kIsWeb ? DatabaseHelper() : DatabaseHelper();
   final FirestoreService _firestoreService = FirestoreService();
   final AuthService _authService = AuthService();
+  late SearchService _searchService;
+  late SearchStateProvider _searchStateProvider;
+  late TextEditingController _searchController;
   
   List<Folder> folders = [];
   List<AppList> lists = [];
@@ -36,17 +50,30 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Set<String> expandedFolders = {}; // Track which folders are expanded
   late TabController _tabController;
   bool _isLoading = false;
+  bool _isSearching = false;
+  String _searchQuery = '';
+  late Duration _searchDebounce;
+  Timer? _searchDebounceTimer;
+  bool _isSearchFocused = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _searchController = TextEditingController();
+    _searchController.addListener(_onSearchChanged);
+    _searchService = SearchService();
+    _searchStateProvider = SearchStateProvider(searchService: _searchService);
+    _searchDebounce = const Duration(milliseconds: 300);
     _checkAuthAndLoadData();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
+    _searchStateProvider.dispose();
+    _searchDebounceTimer?.cancel();
     super.dispose();
   }
 
@@ -58,6 +85,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       }
       return;
     }
+    await _searchService.init(user.uid);
+    await _searchStateProvider.initialize();
     await _loadData();
   }
 
@@ -186,12 +215,192 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
 
+  // --- Search Methods ---
+
+  void _onSearchChanged() {
+    setState(() {
+      _searchQuery = _searchController.text;
+    });
+
+    // Debounce search
+    _performSearch();
+  }
+
+  Future<void> _performSearch() async {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(_searchDebounce, () async {
+      if (!mounted) return;
+
+      final query = _searchController.text.trim();
+      if (query.isEmpty) {
+        setState(() {
+          _isSearching = _isSearchFocused;
+        });
+        if (_isSearchFocused) {
+          await _searchStateProvider.showRecentSearchesView();
+        } else {
+          _searchStateProvider.hideRecentSearchesView();
+        }
+      } else {
+        setState(() {
+          _isSearching = true;
+        });
+        await _searchStateProvider.search(query);
+      }
+
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    _searchStateProvider.clearSearch();
+    setState(() {
+      _isSearching = _isSearchFocused;
+      _searchQuery = '';
+    });
+    if (_isSearchFocused) {
+      _searchStateProvider.showRecentSearchesView();
+    }
+  }
+
+  void _onListResultTap(GroupedListResult group) {
+    _clearSearch();
+    // Navigate to list detail
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ListDetailPage(
+          listId: group.list.id,
+          title: group.list.title,
+          isShared: false,
+          ownerId: null,
+        ),
+      ),
+    );
+  }
+
+  void _onItemResultTap(ListItemModel item, GroupedListResult parentList) {
+    _clearSearch();
+    // Navigate to parent list (list detail page will handle highlighting)
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ListDetailPage(
+          listId: parentList.list.id,
+          title: parentList.list.title,
+          isShared: false,
+          ownerId: null,
+          itemIdToHighlight: item.id,
+        ),
+      ),
+    );
+  }
+
+  void _onRecentSearchTap(String query) {
+    _searchController.text = query;
+    _performSearch();
+  }
+
+  void _onRecentSearchRemove(String query) {
+    _searchStateProvider.removeFromHistory(query);
+  }
+
+  void _openFilterSheet() {
+    showSearchFiltersSheet(
+      context,
+      initialFilter: _searchStateProvider.filterState.value,
+      onApplyFilters: (newFilters) {
+        _searchStateProvider.updateFilters(newFilters);
+      },
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return ValueListenableBuilder<SearchFilterModel>(
+      valueListenable: _searchStateProvider.filterState,
+      builder: (context, filterModel, child) {
+        return SearchBarWidget(
+          controller: _searchController,
+          filterModel: filterModel,
+          onClear: _clearSearch,
+          onFilterTap: _openFilterSheet,
+          onFocusChanged: (focused) async {
+            _isSearchFocused = focused;
+            final isEmpty = _searchController.text.trim().isEmpty;
+            if (focused && isEmpty) {
+              setState(() {
+                _isSearching = true;
+              });
+              await _searchStateProvider.showRecentSearchesView();
+            } else if (!focused && isEmpty) {
+              setState(() {
+                _isSearching = false;
+              });
+              _searchStateProvider.hideRecentSearchesView();
+            }
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSearchContent() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _searchStateProvider.showRecentSearches,
+      builder: (context, showRecent, child) {
+        if (showRecent) {
+          return ValueListenableBuilder<List<RecentSearch>>(
+            valueListenable: _searchStateProvider.recentSearches,
+            builder: (context, recentSearches, child) {
+              return RecentSearchesWidget(
+                recentSearches: recentSearches,
+                onSearchTap: _onRecentSearchTap,
+                onRemoveSearch: _onRecentSearchRemove,
+                onClearHistory: _searchStateProvider.clearHistory,
+              );
+            },
+          );
+        }
+
+        return ValueListenableBuilder<bool>(
+          valueListenable: _searchStateProvider.isSearching,
+          builder: (context, isSearching, child) {
+            if (isSearching) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            return ValueListenableBuilder<SearchResultModel?>(
+              valueListenable: _searchStateProvider.searchResults,
+              builder: (context, results, child) {
+                if (results == null) {
+                  return const Center(
+                    child: Text('Start typing to search...'),
+                  );
+                }
+
+                return SearchResultsWidget(
+                  results: results,
+                  onListTap: _onListResultTap,
+                  onItemTap: _onItemResultTap,
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Listify'),
         centerTitle: true,
+        elevation: _isSearching ? 0 : 2,
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
@@ -203,23 +412,42 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             },
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.grey[300],
-          tabs: const [
-            Tab(text: 'My Lists'),
-            Tab(text: 'Shared'),
-          ],
-        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
+          : Column(
               children: [
-                _buildMyListsTab(),
-                _buildSharedTab(),
+                // Search Bar
+                _buildSearchBar(),
+                // Main Content
+                Expanded(
+                  child: _isSearching
+                      ? _buildSearchContent()
+                      : Column(
+                          children: [
+                            // TabBar
+                            TabBar(
+                              controller: _tabController,
+                              labelColor: Colors.blue,
+                              unselectedLabelColor: Colors.grey,
+                              tabs: const [
+                                Tab(text: 'My Lists'),
+                                Tab(text: 'Shared'),
+                              ],
+                            ),
+                            // Tab Content
+                            Expanded(
+                              child: TabBarView(
+                                controller: _tabController,
+                                children: [
+                                  _buildMyListsTab(),
+                                  _buildSharedTab(),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
               ],
             ),
       floatingActionButton: FloatingActionButton(

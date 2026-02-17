@@ -23,6 +23,7 @@ class ListDetailPage extends StatefulWidget {
   final bool isShared;
   final ShareRole? shareRole;
   final String? ownerId;  // Optional owner ID for folder-shared lists
+  final String? itemIdToHighlight;
 
   const ListDetailPage({
     super.key,
@@ -31,6 +32,7 @@ class ListDetailPage extends StatefulWidget {
     this.isShared = false,
     this.shareRole,
     this.ownerId,
+    this.itemIdToHighlight,
   });
 
   @override
@@ -41,6 +43,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
   final DatabaseHelper _dbHelper = DatabaseHelper();
   final AuthService _authService = AuthService();
   final FirestoreService _firestoreService = FirestoreService();
+  final ScrollController _scrollController = ScrollController();
   List<ListItemModel> items = [];
   AppList? list;
   bool isSelectionMode = false;
@@ -48,6 +51,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
   List<ListItemModel>? copiedItems;
   DateTime currentDate = DateTime.now();
   Timer? _countdownTimer;
+  Timer? _highlightClearTimer;
+  String? _highlightItemId;
 
   // Check if current user can edit this list
   bool get canEditList {
@@ -60,6 +65,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
   @override
   void initState() {
     super.initState();
+    _highlightItemId = widget.itemIdToHighlight;
     _loadData();
     // Update countdown every minute
     _countdownTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
@@ -72,6 +78,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _highlightClearTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -267,13 +275,40 @@ class _ListDetailPageState extends State<ListDetailPage> {
       
       if (mounted) {
         setState(() {});
+        _scrollToHighlightedItem();
       }
     } catch (e) {
       print('Error loading list: $e');
       if (mounted) {
         setState(() {});
+        _scrollToHighlightedItem();
       }
     }
+  }
+
+  void _scrollToHighlightedItem() {
+    if (_highlightItemId == null) return;
+    final index = items.indexWhere((item) => item.id == _highlightItemId);
+    if (index == -1) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final targetOffset = (index * 72.0).toDouble();
+      _scrollController.animateTo(
+        targetOffset,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOut,
+      );
+    });
+
+    _highlightClearTimer?.cancel();
+    _highlightClearTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() {
+          _highlightItemId = null;
+        });
+      }
+    });
   }
 
   void _addItem(String name) async {
@@ -758,7 +793,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
     return Scaffold(
       appBar: AppBar(
         title: list?.type == ListType.dateBoundPersistent
-            ? Row(
+                ? Row(
                 children: [
                   IconButton(
                     icon: const Icon(Icons.chevron_left),
@@ -850,7 +885,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                   ),
                 ],
               )
-            : Row(
+                : Row(
                 children: [
                   Expanded(child: Text(list?.title ?? widget.title)),
                   PopupMenuButton<String>(
@@ -958,10 +993,15 @@ class _ListDetailPageState extends State<ListDetailPage> {
             ),
           Expanded(
             child: ListView.builder(
+              controller: _scrollController,
               itemCount: items.length,
               itemBuilder: (_, index) {
                 final item = items[index];
-                return ListTile(
+                final isHighlighted = item.id == _highlightItemId;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  color: isHighlighted ? Colors.yellow.shade100 : Colors.transparent,
+                  child: ListTile(
                   leading: isSelectionMode
                       ? Checkbox(
                           value: selectedItems.contains(item.id),
@@ -1093,6 +1133,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
                           }
                         }
                       : null,
+                  ),
                 );
               },
             ),

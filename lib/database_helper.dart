@@ -3,10 +3,13 @@ import 'package:path/path.dart';
 import 'package:flutter/foundation.dart';
 import 'models/folder_model.dart';
 import 'models/list_model.dart';
+import 'models/list_type.dart';
 import 'models/list_field_model.dart';
 import 'models/list_item_model.dart';
 import 'models/list_field_value_model.dart';
 import 'models/item_field_type.dart';
+import 'models/search_query.dart';
+import 'models/search_result_model.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
@@ -419,5 +422,210 @@ class DatabaseHelper {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  // --- Search Methods ---
+
+  /// Searches folders by name using LIKE query (case-insensitive)
+  Future<List<Folder>> searchFolders(String query) async {
+    if (query.isEmpty) return [];
+    
+    final db = await database;
+    final maps = await db.query(
+      'folders',
+      where: 'LOWER(name) LIKE ?',
+      whereArgs: ['%${query.toLowerCase()}%'],
+      orderBy: 'name ASC',
+    );
+    return maps.map((map) => Folder.fromMap(map)).toList();
+  }
+
+  /// Searches lists and items together, returning results grouped by list
+  /// Supports filtering by completion status, date range, and list types
+  /// 
+  /// Parameters:
+  /// - query: Search text to match in list titles and item titles
+  /// - completionFilter: Filter items by completion status (all/completed/pending)
+  /// - dateRangeStart: Optional start date filter
+  /// - dateRangeEnd: Optional end date filter
+  /// - listTypes: Optional set of list types to include (empty set = all types)
+  /// - folderIdFilterMap: Optional map of list IDs to folder names (for context)
+  Future<SearchResultModel> searchListsAndItemsGrouped({
+    required String query,
+    required CompletionStatus completionFilter,
+    DateTime? dateRangeStart,
+    DateTime? dateRangeEnd,
+    Set<String>? listTypes,
+    Map<String, String>? folderIdFilterMap,
+  }) async {
+    if (query.isEmpty) {
+      return SearchResultModel.empty(query);
+    }
+
+    final db = await database;
+    final searchQuery = '%${query.toLowerCase()}%';
+
+    try {
+      // Build the main JOIN query to get both lists and items that match
+      const baseQuery = '''
+        SELECT DISTINCT
+          l.id as list_id,
+          l.title as list_title,
+          l.folder_id,
+          l.type as list_type,
+          l.due_date,
+          l.is_repeating,
+          l.repeat_interval,
+          l.save_items_between_cycles,
+          li.id as item_id,
+          li.title as item_title,
+          li.completed,
+          li."order"
+        FROM lists l
+        LEFT JOIN list_items li ON l.id = li.list_id
+        WHERE (LOWER(l.title) LIKE ? OR LOWER(li.title) LIKE ?)
+        ORDER BY l.title ASC, li."order" ASC
+      ''';
+
+      final results = await db.rawQuery(baseQuery, [searchQuery, searchQuery]);
+
+      // Post-process results to group by list
+      final groupedResults = <String, GroupedListResult>{};
+
+      for (final row in results) {
+        final listId = row['list_id'] as String;
+        final listTitle = row['list_title'] as String;
+        final listType = row['list_type'] as String?;
+        final folderId = row['folder_id'] as String?;
+
+        // Skip if list type filter is applied and this list doesn't match
+        if (listTypes != null && listTypes.isNotEmpty) {
+          if (!listTypes.contains(listType)) {
+            continue;
+          }
+        }
+
+        // Initialize the grouped result for this list if not already done
+        if (!groupedResults.containsKey(listId)) {
+          final appList = AppList(
+            id: listId,
+            title: listTitle,
+            folderId: folderId ?? '',
+            type:_parseListType(listType),
+            dueDate: row['due_date'] != null
+                ? DateTime.tryParse(row['due_date'] as String)
+                : null,
+            isRepeating: (row['is_repeating'] as int?) == 1,
+            repeatInterval: _parseRepeatInterval(row['repeat_interval'] as String?),
+            saveItemsBetweenCycles: (row['save_items_between_cycles'] as int?) == 1,
+          );
+
+          // Get folder name if available
+          String? folderName;
+          if (folderId != null) {
+            if (folderIdFilterMap != null && folderIdFilterMap.containsKey(folderId)) {
+              folderName = folderIdFilterMap[folderId];
+            } else {
+              // Query folder name
+              final folderMaps = await db.query(
+                'folders',
+                where: 'id = ?',
+                whereArgs: [folderId],
+              );
+              if (folderMaps.isNotEmpty) {
+                folderName = folderMaps.first['name'] as String?;
+              }
+            }
+          }
+
+          groupedResults[listId] = GroupedListResult(
+            list: appList,
+            parentFolderName: folderName,
+            parentFolderId: folderId,
+            matchingItems: [],
+          );
+        }
+
+        // Add item if it exists and matches filter criteria
+        final itemId = row['item_id'];
+        if (itemId != null && itemId.toString().isNotEmpty) {
+          final itemTitle = row['item_title'] as String?;
+          final completed = (row['completed'] as int?) == 1;
+
+          // Apply completion filter
+          if (completionFilter == CompletionStatus.completed && !completed) {
+            continue;
+          }
+          if (completionFilter == CompletionStatus.pending && completed) {
+            continue;
+          }
+
+          // Create item model
+          final item = ListItemModel(
+            id: itemId.toString(),
+            title: itemTitle ?? '',
+            listId: listId,
+            completed: completed,
+            order: (row['order'] as int?) ?? 0,
+          );
+
+          // Add to matching items if not already added
+          final groupedResult = groupedResults[listId]!;
+          if (!groupedResult.matchingItems.any((i) => i.id == itemId)) {
+            groupedResult.matchingItems.add(item);
+          }
+        }
+      }
+
+      // Also search for lists that match the query text even if no items match
+      // This ensures lists are shown even if only the list title matches
+      final idsToRemove = <String>[];
+      for (final groupedResult in groupedResults.values) {
+        if (groupedResult.matchingItems.isEmpty &&
+            !groupedResult.list.title.toLowerCase().contains(query.toLowerCase())) {
+          idsToRemove.add(groupedResult.list.id);
+        }
+      }
+      for (final id in idsToRemove) {
+        groupedResults.remove(id);
+      }
+
+      return SearchResultModel(
+        groupedResults: groupedResults,
+        searchQuery: query,
+        totalResultCount: results.length,
+      );
+    } catch (e) {
+      print('Error during search: $e');
+      return SearchResultModel.empty(query);
+    }
+  }
+
+  /// Helper to parse ListType from string
+  ListType _parseListType(String? typeStr) {
+    if (typeStr == null) return ListType.regular;
+    switch (typeStr) {
+      case 'recurring':
+        return ListType.recurring;
+      case 'dateBoundPersistent':
+        return ListType.dateBoundPersistent;
+      default:
+        return ListType.regular;
+    }
+  }
+
+  /// Helper to parse RepeatInterval from string
+  RepeatInterval? _parseRepeatInterval(String? interval) {
+    if (interval == null) return null;
+    switch (interval) {
+      case 'day':
+        return RepeatInterval.day;
+      case 'week':
+        return RepeatInterval.week;
+      case 'month':
+        return RepeatInterval.month;
+      default:
+        return null;
+    }
   }
 }
