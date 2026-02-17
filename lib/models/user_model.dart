@@ -88,3 +88,52 @@ class ListShare {
     };
   }
 }
+
+class FolderShare {
+  final String id;
+  final String folderId;
+  final String ownerUserId;
+  final String sharedWithUserId;
+  final ShareRole role;
+  final DateTime sharedAt;
+  final String? sharedWithEmail;
+
+  FolderShare({
+    required this.id,
+    required this.folderId,
+    required this.ownerUserId,
+    required this.sharedWithUserId,
+    required this.role,
+    required this.sharedAt,
+    this.sharedWithEmail,
+  });
+
+  factory FolderShare.fromMap(Map<String, dynamic> map, String id) {
+    return FolderShare(
+      id: id,
+      folderId: map['folderId'] ?? '',
+      ownerUserId: map['ownerUserId'] ?? '',
+      sharedWithUserId: map['sharedWithUserId'] ?? '',
+      role: ShareRole.values.firstWhere(
+        (e) => e.toString().split('.').last == map['role'],
+        orElse: () => ShareRole.viewer,
+      ),
+      sharedAt: map['sharedAt'] != null
+          ? DateTime.parse(map['sharedAt'])
+          : DateTime.now(),
+      sharedWithEmail: map['sharedWithEmail'],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'folderId': folderId,
+      'ownerUserId': ownerUserId,
+      'sharedWithUserId': sharedWithUserId,
+      'role': role.toString().split('.').last,
+      'sharedAt': sharedAt.toIso8601String(),
+      'sharedWithEmail': sharedWithEmail,
+    };
+  }
+}
+

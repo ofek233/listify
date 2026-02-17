@@ -174,18 +174,19 @@ class _ShareListDialogState extends State<ShareListDialog> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
+                  color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.shade200),
+                  border: Border.all(color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Permission Levels',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -193,18 +194,21 @@ class _ShareListDialogState extends State<ShareListDialog> {
                       Icons.visibility,
                       'Viewer',
                       'Can only view',
+                      Theme.of(context).colorScheme.onPrimaryContainer,
                     ),
                     const SizedBox(height: 6),
                     _buildPermissionLevel(
                       Icons.edit,
                       'Editor',
                       'Can view & edit items',
+                      Theme.of(context).colorScheme.onPrimaryContainer,
                     ),
                     const SizedBox(height: 6),
                     _buildPermissionLevel(
                       Icons.admin_panel_settings,
                       'Owner',
                       'Full control including sharing',
+                      Theme.of(context).colorScheme.onPrimaryContainer,
                     ),
                   ],
                 ),
@@ -275,12 +279,15 @@ class _ShareListDialogState extends State<ShareListDialog> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.red.shade100,
+                    color: Theme.of(context).colorScheme.errorContainer,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
                     _errorMessage!,
-                    style: TextStyle(color: Colors.red.shade900, fontSize: 12),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ],
@@ -388,10 +395,15 @@ class _ShareListDialogState extends State<ShareListDialog> {
     );
   }
 
-  Widget _buildPermissionLevel(IconData icon, String title, String description) {
+  Widget _buildPermissionLevel(
+    IconData icon,
+    String title,
+    String description,
+    Color textColor,
+  ) {
     return Row(
       children: [
-        Icon(icon, size: 18),
+        Icon(icon, size: 18, color: textColor),
         const SizedBox(width: 8),
         Expanded(
           child: Column(
@@ -399,16 +411,17 @@ class _ShareListDialogState extends State<ShareListDialog> {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 12,
+                  color: textColor,
                 ),
               ),
               Text(
                 description,
                 style: TextStyle(
                   fontSize: 11,
-                  color: Colors.grey.shade700,
+                  color: textColor.withOpacity(0.7),
                 ),
               ),
             ],

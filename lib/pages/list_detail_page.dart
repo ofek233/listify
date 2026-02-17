@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import '../models/list_item_model.dart';
 import '../models/list_field_model.dart';
@@ -9,6 +10,7 @@ import '../models/list_type.dart';
 import '../models/user_model.dart';
 import '../widgets/item_edit_dialog.dart';
 import '../widgets/share_list_dialog.dart';
+import '../widgets/ai_control_panel.dart';
 import '../database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
@@ -20,6 +22,7 @@ class ListDetailPage extends StatefulWidget {
   final String title;
   final bool isShared;
   final ShareRole? shareRole;
+  final String? ownerId;  // Optional owner ID for folder-shared lists
 
   const ListDetailPage({
     super.key,
@@ -27,6 +30,7 @@ class ListDetailPage extends StatefulWidget {
     required this.title,
     this.isShared = false,
     this.shareRole,
+    this.ownerId,
   });
 
   @override
@@ -73,6 +77,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
 
   Future<void> _loadData() async {
     try {
+      print('DEBUG: _loadData() called for listId: ${widget.listId}');
       final user = _authService.currentUser;
       if (user == null) {
         if (mounted) Navigator.pop(context);
@@ -81,17 +86,25 @@ class _ListDetailPageState extends State<ListDetailPage> {
 
       // Load list metadata from Firestore
       AppList? firebaseList;
+      String? ownerUserId;
       
       if (widget.isShared) {
-        // For shared lists, get the share info to find the owner
-        final shares = await _firestoreService.getSharedListsForUser(user.uid);
-        final share = shares.firstWhere(
-          (s) => s.listId == widget.listId,
-          orElse: () => throw Exception('Share not found'),
-        );
-        
-        // Load the specific list from the owner's collection
-        firebaseList = await _firestoreService.getList(share.ownerUserId, widget.listId);
+        // If ownerId is provided (from folder share), use it directly
+        if (widget.ownerId != null) {
+          ownerUserId = widget.ownerId;
+          firebaseList = await _firestoreService.getList(widget.ownerId!, widget.listId);
+        } else {
+          // For direct list shares, get the share info to find the owner
+          final shares = await _firestoreService.getSharedListsForUser(user.uid);
+          final share = shares.firstWhere(
+            (s) => s.listId == widget.listId,
+            orElse: () => throw Exception('Share not found'),
+          );
+          
+          ownerUserId = share.ownerUserId;
+          // Load the specific list from the owner's collection
+          firebaseList = await _firestoreService.getList(share.ownerUserId, widget.listId);
+        }
         
         // If not found, create a default one
         firebaseList ??= AppList(
@@ -99,11 +112,12 @@ class _ListDetailPageState extends State<ListDetailPage> {
             title: widget.title,
             folderId: '',
             type: ListType.regular,
-            ownerId: share.ownerUserId,
+            ownerId: ownerUserId ?? user.uid,
           );
       } else {
         // For own lists, load from current user's collection
         firebaseList = await _firestoreService.getList(user.uid, widget.listId);
+        ownerUserId = user.uid;
         
         // If not found, create a default one
         firebaseList ??= AppList(
@@ -117,20 +131,98 @@ class _ListDetailPageState extends State<ListDetailPage> {
       
       list = firebaseList;
       
-      // Load items from local database
-      items = await _dbHelper.getItemsWithDetails(widget.listId);
+      // Load items
+      if (!kIsWeb) {
+        // For non-web platforms (Android/iOS), use local database
+        items = await _dbHelper.getItemsWithDetails(widget.listId);
+        print('DEBUG: Loaded ${items.length} items from local DB for list ${widget.listId}');
+      } else {
+        // On web, load items from Firebase
+        if (ownerUserId != null) {
+          final firebaseItems = await _firestoreService.getListItems(widget.listId, ownerUserId);
+          items = [];
+          
+          for (var itemData in firebaseItems) {
+            final item = ListItemModel(
+              id: itemData['id'],
+              title: itemData['title'] ?? '',
+              listId: widget.listId,
+              completed: itemData['completed'] ?? false,
+            );
+            
+            // Load fields for this item
+            try {
+              final fieldsData = await _firestoreService.getItemFields(
+                listId: widget.listId,
+                itemId: item.id,
+                ownerUserId: ownerUserId,
+              );
+              
+              for (var fieldData in fieldsData) {
+                final field = ListField.fromMap(fieldData);
+                item.fields.add(field);
+              }
+              
+              // Load field values
+              final fieldValuesData = await _firestoreService.getItemFieldValues(
+                listId: widget.listId,
+                itemId: item.id,
+                ownerUserId: ownerUserId,
+              );
+              
+              print('DEBUG: Item ${item.id} loaded ${fieldValuesData.length} field values');
+              for (var valueData in fieldValuesData) {
+                final fieldValue = ListFieldValue.fromMap(valueData);
+                item.fieldValues.add(fieldValue);
+                print('DEBUG:   - Field ${fieldValue.fieldId} = ${fieldValue.value}');
+              }
+            } catch (e) {
+              print('Error loading fields for item ${item.id}: $e');
+            }
+            
+            items.add(item);
+          }
+          
+          print('DEBUG: Loaded ${items.length} items from Firebase for list ${widget.listId}');
+        }
+      }
+      
+      print('DEBUG: List type: ${list?.type}');
       
       // For date-bound lists, load completion status for current date
       if (list?.type == ListType.dateBoundPersistent) {
+        final dateStr = currentDate.toIso8601String().split('T')[0];
         for (final item in items) {
-          item.completed = await _dbHelper.getItemCompletionForDate(item.id, currentDate);
+          if (!kIsWeb) {
+            item.completed = await _dbHelper.getItemCompletionForDate(item.id, currentDate);
+          } else {
+            // On web, load from Firestore
+            if (ownerUserId != null) {
+              item.completed = await _firestoreService.getItemCompletionForDate(
+                listId: widget.listId,
+                itemId: item.id,
+                ownerUserId: ownerUserId,
+                date: dateStr,
+              );
+            }
+          }
         }
       }
-
-      // Handle recurring timer cycle completion
-      if (list?.type == ListType.recurring && list?.dueDate != null) {
+      
+      if (!kIsWeb && list?.type == ListType.dateBoundPersistent) {
         final now = DateTime.now();
-        DateTime currentDueDate = list!.dueDate!;
+        // Parse dueDate from Firestore (might be String)
+        DateTime currentDueDate;
+        if (list!.dueDate is String) {
+          try {
+            currentDueDate = DateTime.parse(list!.dueDate.toString());
+          } catch (e) {
+            print('Error parsing dueDate: $e');
+            return; // Skip if we can't parse
+          }
+        } else {
+          currentDueDate = list!.dueDate!;
+        }
 
         // If repeating and due date has passed, advance to next cycle
         if (list!.isRepeating == true && currentDueDate.isBefore(now)) {
@@ -185,27 +277,106 @@ class _ListDetailPageState extends State<ListDetailPage> {
   }
 
   void _addItem(String name) async {
-    final newItem = ListItemModel(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: name,
-      listId: widget.listId,
-    );
-    await _dbHelper.insertItem(newItem);
-    if (list?.roleModelItemId != null) {
-      final roleItem = await _dbHelper.getItem(list!.roleModelItemId!);
-      if (roleItem != null) {
-        roleItem.fields = await _dbHelper.getFields(roleItem.id);
-        for (final field in roleItem.fields) {
-          final existing = newItem.fields.where((f) => f.name == field.name && f.type == field.type);
-          if (existing.isEmpty) {
-            final newField = field.copyWith(id: DateTime.now().millisecondsSinceEpoch.toString(), itemId: newItem.id);
-            await _dbHelper.insertField(newField);
-            await _dbHelper.insertOrUpdateFieldValue(ListFieldValue(fieldId: newField.id, itemId: newItem.id, value: null));
+    try {
+      final user = _authService.currentUser;
+      if (user == null) return;
+      
+      final newItem = ListItemModel(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: name,
+        listId: widget.listId,
+      );
+      
+      // Get the owner's ID (for shared lists, use the owner; for personal lists, use current user)
+      final ownerUserId = list?.ownerId ?? user.uid;
+      
+      // Save to both local DB and Firebase
+      if (!kIsWeb) {
+        // Save locally
+        await _dbHelper.insertItem(newItem);
+        
+        // Also save to Firebase so it syncs to other users
+        try {
+          await _firestoreService.createItem(
+            listId: widget.listId,
+            itemId: newItem.id,
+            title: name,
+            ownerUserId: ownerUserId,
+          );
+        } catch (firebaseError) {
+          print('Firebase sync error (item may still be saved locally): $firebaseError');
+          // Don't fail - item is saved locally, will sync when permissions are fixed
+        }
+        
+        // Apply role model fields if exists
+        if (list?.roleModelItemId != null) {
+          final roleItem = await _dbHelper.getItem(list!.roleModelItemId!);
+          if (roleItem != null) {
+            roleItem.fields = await _dbHelper.getFields(roleItem.id);
+            for (final field in roleItem.fields) {
+              final existing = newItem.fields.where((f) => f.name == field.name && f.type == field.type);
+              if (existing.isEmpty) {
+                final newField = field.copyWith(id: DateTime.now().millisecondsSinceEpoch.toString(), itemId: newItem.id);
+                await _dbHelper.insertField(newField);
+                await _dbHelper.insertOrUpdateFieldValue(ListFieldValue(fieldId: newField.id, itemId: newItem.id, value: null));
+              }
+            }
           }
         }
+      } else {
+        // On web, save to Firebase
+        await _firestoreService.createItem(
+          listId: widget.listId,
+          itemId: newItem.id,
+          title: name,
+          ownerUserId: ownerUserId,
+        );
+        
+        // Apply role model fields on web
+        if (list?.roleModelItemId != null) {
+          // Find the role model item
+          final roleItem = items.firstWhere(
+            (i) => i.id == list!.roleModelItemId,
+            orElse: () => ListItemModel(id: '', title: '', listId: ''),
+          );
+          if (roleItem.id.isNotEmpty) {
+            // Apply its fields to the new item
+            for (final field in roleItem.fields) {
+              final newFieldId = '${newItem.id}_${field.name}_${DateTime.now().millisecondsSinceEpoch}';
+              await _firestoreService.createField(
+                listId: widget.listId,
+                itemId: newItem.id,
+                fieldId: newFieldId,
+                name: field.name,
+                type: field.type.toString().split('.').last,
+                ownerUserId: ownerUserId,
+              );
+              // Initialize empty field value
+              await _firestoreService.setFieldValue(
+                listId: widget.listId,
+                itemId: newItem.id,
+                fieldId: newFieldId,
+                ownerUserId: ownerUserId,
+                value: null,
+              );
+            }
+          }
+        }
+        
+        // Reload to get fields
+        await _loadData();
+        return;
+      }
+      
+      await _loadData();
+    } catch (e) {
+      print('Error adding item: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error creating item: $e')),
+        );
       }
     }
-    await _loadData();
   }
 
   void _showRenameItemDialog(ListItemModel item) {
@@ -219,9 +390,51 @@ class _ListDetailPageState extends State<ListDetailPage> {
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           TextButton(
             onPressed: () async {
-              await _dbHelper.updateItem(item.copyWith(title: controller.text));
-              await _loadData();
-              Navigator.pop(context);
+              try {
+                final updatedItem = item.copyWith(title: controller.text);
+                final ownerUserId = list?.ownerId ?? _authService.currentUser?.uid;
+                
+                if (!kIsWeb) {
+                  // Save locally
+                  await _dbHelper.updateItem(updatedItem);
+                  // Also sync to Firebase
+                  if (ownerUserId != null) {
+                    try {
+                      await _firestoreService.updateItem(
+                        listId: widget.listId,
+                        itemId: item.id,
+                        ownerUserId: ownerUserId,
+                        data: {'title': controller.text},
+                      );
+                    } catch (firebaseError) {
+                      print('Firebase sync error (item updated locally): $firebaseError');
+                      // Don't fail - item is updated locally
+                    }
+                  }
+                } else {
+                  // On web, update in Firebase and UI
+                  if (ownerUserId != null) {
+                    await _firestoreService.updateItem(
+                      listId: widget.listId,
+                      itemId: item.id,
+                      ownerUserId: ownerUserId,
+                      data: {'title': controller.text},
+                    );
+                  }
+                  final index = items.indexWhere((i) => i.id == item.id);
+                  if (index >= 0) {
+                    items[index] = updatedItem;
+                    setState(() {});
+                  }
+                }
+                if (!kIsWeb) await _loadData();
+                Navigator.pop(context);
+              } catch (e) {
+                print('Error renaming item: $e');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error: $e')),
+                );
+              }
             },
             child: const Text('Save'),
           ),
@@ -231,23 +444,61 @@ class _ListDetailPageState extends State<ListDetailPage> {
   }
 
   void _makeRoleModel(ListItemModel item) async {
-    if (list == null) return;
-    final user = _authService.currentUser;
-    if (user == null) return;
-    // Set role model
-    final updatedList = list!.copyWith(roleModelItemId: item.id);
-    await _dbHelper.updateList(updatedList);
-    // Update in Firestore using the owner's ID (not current user for shared lists)
-    final ownerUserId = list!.ownerId ?? user.uid;
-    await _firestoreService.updateList(ownerUserId, updatedList);
-    list = updatedList;
-    // Apply role model fields to all existing items
-    await _dbHelper.applyRoleModelFields(widget.listId, item.id);
-    // Set order to 0, shift others
-    item.order = 0;
-    await _dbHelper.updateItem(item);
-    await _dbHelper.updateItemsOrder(widget.listId, item.id);
-    await _loadData();
+    try {
+      if (list == null) return;
+      final user = _authService.currentUser;
+      if (user == null) return;
+      // Set role model
+      final updatedList = list!.copyWith(roleModelItemId: item.id);
+      if (!kIsWeb) {
+        await _dbHelper.updateList(updatedList);
+      }
+      // Update in Firestore using the owner's ID (not current user for shared lists)
+      final ownerUserId = list!.ownerId ?? user.uid;
+      await _firestoreService.updateList(ownerUserId, updatedList);
+      list = updatedList;
+      
+      // Apply role model fields to all existing items
+      if (!kIsWeb) {
+        await _dbHelper.applyRoleModelFields(widget.listId, item.id);
+      } else {
+        // On web, apply to all items via Firestore
+        for (final otherItem in items.where((i) => i.id != item.id)) {
+          for (final field in item.fields) {
+            // Check if field already exists
+            final existing = otherItem.fields.where((f) => f.name == field.name && f.type == field.type);
+            if (existing.isEmpty) {
+              final newFieldId = '${otherItem.id}_${field.name}_${DateTime.now().millisecondsSinceEpoch}';
+              await _firestoreService.createField(
+                listId: widget.listId,
+                itemId: otherItem.id,
+                fieldId: newFieldId,
+                name: field.name,
+                type: field.type.toString().split('.').last,
+                ownerUserId: ownerUserId,
+              );
+              await _firestoreService.setFieldValue(
+                listId: widget.listId,
+                itemId: otherItem.id,
+                fieldId: newFieldId,
+                ownerUserId: ownerUserId,
+                value: null,
+              );
+            }
+          }
+        }
+        await _loadData();
+      }
+      
+      setState(() {});
+    } catch (e) {
+      print('Error setting role model: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
   }
 
   String _getFieldDisplayValue(ListField field, ListFieldValue? value) {
@@ -263,14 +514,36 @@ class _ListDetailPageState extends State<ListDetailPage> {
       case ItemFieldType.yesNo:
         return value!.value == true ? 'Yes' : 'No';
       case ItemFieldType.date:
-        return (value!.value as DateTime?)?.toString().split(' ')[0] ?? '';
+        if (value!.value is DateTime) {
+          return (value.value as DateTime).toString().split(' ')[0];
+        }
+        if (value.value is String) {
+          try {
+            return DateTime.parse(value.value.toString()).toString().split(' ')[0];
+          } catch (e) {
+            print('Error parsing date for display: $e');
+            return value.value.toString();
+          }
+        }
+        return value.value.toString();
     }
   }
 
   String _getCountdownText() {
     if (list?.type != ListType.recurring || list?.dueDate == null) return '';
 
-    DateTime nextDueDate = list!.dueDate!;
+    // Parse dueDate from Firestore (might be String)
+    DateTime nextDueDate;
+    if (list!.dueDate is String) {
+      try {
+        nextDueDate = DateTime.parse(list!.dueDate.toString());
+      } catch (e) {
+        print('Error parsing dueDate: $e');
+        return ''; // Return empty if we can't parse
+      }
+    } else {
+      nextDueDate = list!.dueDate!;
+    }
     final now = DateTime.now();
 
     // If repeating and due date has passed, calculate next cycle
@@ -358,14 +631,126 @@ class _ListDetailPageState extends State<ListDetailPage> {
   void _showShareDialog() {
     final user = _authService.currentUser;
     if (user == null) return;
+    final ownerUserId = list?.ownerId ?? user.uid;
 
     showDialog(
       context: context,
       builder: (context) => ShareListDialog(
         listId: widget.listId,
-        ownerUserId: user.uid,
+        ownerUserId: ownerUserId,
       ),
     );
+  }
+
+  Future<void> _deleteItem(ListItemModel item) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Item'),
+        content: Text('Delete "${item.title}"? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final user = _authService.currentUser;
+      if (user == null) return;
+      final ownerUserId = list?.ownerId ?? user.uid;
+
+      if (!kIsWeb) {
+        // Clean up local fields/values then delete item
+        final fields = await _dbHelper.getFields(item.id);
+        for (final field in fields) {
+          await _dbHelper.deleteField(field.id, item.id);
+          await _dbHelper.deleteFieldValue(field.id, item.id);
+        }
+        await _dbHelper.deleteItem(item.id);
+      } else {
+        // Delete Firestore fields/values, then item
+        final fieldData = await _firestoreService.getItemFields(
+          listId: widget.listId,
+          itemId: item.id,
+          ownerUserId: ownerUserId,
+        );
+        for (final field in fieldData) {
+          final fieldId = field['id']?.toString();
+          if (fieldId != null) {
+            await _firestoreService.deleteField(
+              listId: widget.listId,
+              itemId: item.id,
+              fieldId: fieldId,
+              ownerUserId: ownerUserId,
+            );
+          }
+        }
+        await _firestoreService.deleteItem(
+          listId: widget.listId,
+          itemId: item.id,
+          ownerUserId: ownerUserId,
+        );
+      }
+
+      if (list?.roleModelItemId == item.id) {
+        final updatedList = list!.copyWith(roleModelItemId: null);
+        if (!kIsWeb) {
+          await _dbHelper.updateList(updatedList);
+        }
+        await _firestoreService.updateList(ownerUserId, updatedList);
+        list = updatedList;
+      }
+
+      await _loadData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting item: $e')),
+        );
+      }
+    }
+  }
+
+  // Get all unique fields from role model item
+  List<ListField> _getAllFields() {
+    if (list?.roleModelItemId == null) return [];
+    
+    final roleModelItem = items.firstWhere(
+      (i) => i.id == list!.roleModelItemId,
+      orElse: () => ListItemModel(id: '', title: '', listId: widget.listId),
+    );
+    
+    return roleModelItem.fields;
+  }
+
+  Map<String, List<ListFieldValue>> _getFieldValuesMap() {
+    final map = <String, List<ListFieldValue>>{};
+    
+    for (final item in items) {
+      map[item.id] = item.fieldValues;
+      print('DEBUG: Building field values map for item ${item.id} (${item.title}): ${item.fieldValues.length} values');
+      for (final fv in item.fieldValues) {
+        print('DEBUG:   - ${fv.fieldId} = ${fv.value}');
+      }
+    }
+    
+    return map;
+  }
+
+  // Handle item reordering from AI Control Panel
+  void _handleItemsReordered(List<ListItemModel> reorderedItems) {
+    setState(() {
+      items = reorderedItems;
+    });
   }
 
   @override
@@ -415,6 +800,54 @@ class _ListDetailPageState extends State<ListDetailPage> {
                       _loadData();
                     },
                   ),
+                  PopupMenuButton<String>(
+                    onSelected: (value) async {
+                      if (value == 'rename') {
+                        _showRenameListDialog();
+                      } else if (value == 'select') {
+                        setState(() {
+                          isSelectionMode = !isSelectionMode;
+                          selectedItems.clear();
+                        });
+                      } else if (value == 'paste' && copiedItems != null) {
+                        await _dbHelper.copyItems(copiedItems!, widget.listId);
+                        await _loadData();
+                      } else if (value == 'share') {
+                        _showShareDialog();
+                      }
+                    },
+                    itemBuilder: (context) => <PopupMenuEntry<String>>[
+                      if (canEditList)
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Text('Rename List'),
+                        ),
+                      PopupMenuItem(
+                        value: 'select',
+                        child: Text(isSelectionMode ? 'Cancel Selection' : 'Select Items'),
+                      ),
+                      if (copiedItems != null && canEditList)
+                        const PopupMenuItem(
+                          value: 'paste',
+                          child: Text('Paste Items'),
+                        ),
+                      if (list != null &&
+                          (list!.ownerId == _authService.currentUser?.uid ||
+                              widget.shareRole == ShareRole.owner)) ...[
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 'share',
+                          child: Row(
+                            children: [
+                              Icon(Icons.share),
+                              SizedBox(width: 8),
+                              Text('Share / Collaborate'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ],
               )
             : Row(
@@ -451,7 +884,10 @@ class _ListDetailPageState extends State<ListDetailPage> {
                           value: 'paste',
                           child: Text('Paste Items'),
                         ),
-                      if (canEditList && (list?.ownerId == _authService.currentUser?.uid || !widget.isShared) && list != null) ...[
+                      // Show share option only to list owners
+                        if (list != null &&
+                          (list!.ownerId == _authService.currentUser?.uid ||
+                            widget.shareRole == ShareRole.owner)) ...[
                         const PopupMenuDivider(),
                         const PopupMenuItem(
                           value: 'share',
@@ -512,6 +948,14 @@ class _ListDetailPageState extends State<ListDetailPage> {
               ),
             ),
           ],
+          // AI Control Panel
+          if (list?.roleModelItemId != null && _getAllFields().isNotEmpty)
+            AIControlPanel(
+              items: items,
+              fields: _getAllFields(),
+              fieldValues: _getFieldValuesMap(),
+              onItemsReordered: _handleItemsReordered,
+            ),
           Expanded(
             child: ListView.builder(
               itemCount: items.length,
@@ -535,10 +979,43 @@ class _ListDetailPageState extends State<ListDetailPage> {
                           value: item.completed,
                           onChanged: canEditList ? (val) async {
                             item.completed = val ?? false;
+                            final ownerUserId = list?.ownerId ?? _authService.currentUser?.uid;
+                            
                             if (list?.type == ListType.dateBoundPersistent) {
-                              await _dbHelper.setItemCompletionForDate(item.id, currentDate, item.completed);
+                              // Date-specific completion tracking
+                              final dateStr = currentDate.toIso8601String().split('T')[0];
+                              if (!kIsWeb) {
+                                await _dbHelper.setItemCompletionForDate(item.id, currentDate, item.completed);
+                              } else {
+                                // On web, save to Firestore
+                                if (ownerUserId != null) {
+                                  await _firestoreService.setItemCompletionForDate(
+                                    listId: widget.listId,
+                                    itemId: item.id,
+                                    ownerUserId: ownerUserId,
+                                    date: dateStr,
+                                    completed: item.completed,
+                                  );
+                                }
+                              }
                             } else {
-                              await _dbHelper.updateItem(item);
+                              if (!kIsWeb) {
+                                await _dbHelper.updateItem(item);
+                              }
+                              // Sync to Firebase
+                              if (ownerUserId != null) {
+                                try {
+                                  await _firestoreService.updateItem(
+                                    listId: widget.listId,
+                                    itemId: item.id,
+                                    ownerUserId: ownerUserId,
+                                    data: {'completed': item.completed},
+                                  );
+                                } catch (firebaseError) {
+                                  print('Firebase sync error (item updated locally): $firebaseError');
+                                  // Don't fail - item is updated locally
+                                }
+                              }
                             }
                             setState(() {});
                           } : null,
@@ -571,6 +1048,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
                         _showRenameItemDialog(item);
                       } else if (value == 'role') {
                         _makeRoleModel(item);
+                      } else if (value == 'delete') {
+                        _deleteItem(item);
                       }
                     },
                     itemBuilder: (context) => <PopupMenuEntry<String>>[
@@ -581,6 +1060,10 @@ class _ListDetailPageState extends State<ListDetailPage> {
                       const PopupMenuItem(
                         value: 'role',
                         child: Text('Make Role Model'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete Item'),
                       ),
                     ],
                   ) : null,

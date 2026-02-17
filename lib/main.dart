@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:provider/provider.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'pages/signup_page.dart';
+import 'utils/theme_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize sqflite for desktop platforms (Windows, Linux, macOS)
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  // Initialize sqflite FFI only for desktop platforms (not web, mobile, or others)
+  if (!kIsWeb) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
   
   // Initialize Firebase with explicit options for all platforms
   try {
@@ -25,11 +30,21 @@ void main() async {
         appId: "1:325994277971:android:3e6520826094f98b016aa6",
       ),
     );
+    
+    // Ensure Firebase Auth is initialized on the main thread
+    FirebaseAuth.instance.authStateChanges().listen((_) {
+      // This ensures the auth state listener is setup on the main thread
+    });
   } catch (e) {
     print('Firebase initialization error: $e');
   }
   
-  runApp(const ListifyApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => ThemeProvider(),
+      child: const ListifyApp(),
+    ),
+  );
 }
 
 class ListifyApp extends StatelessWidget {
@@ -40,10 +55,7 @@ class ListifyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Listify',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
-      ),
+      theme: context.watch<ThemeProvider>().currentTheme,
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {

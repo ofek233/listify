@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:flutter/foundation.dart';
 import 'models/folder_model.dart';
 import 'models/list_model.dart';
 import 'models/list_field_model.dart';
@@ -10,18 +11,28 @@ import 'models/item_field_type.dart';
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
   static Database? _database;
+  
+  // In-memory storage for web platform
+  static final Map<String, List<Map<String, dynamic>>> _memoryStorage = {};
+  static final bool _isWeb = kIsWeb;
 
   factory DatabaseHelper() => _instance;
 
   DatabaseHelper._internal();
 
   Future<Database> get database async {
+    if (_isWeb) {
+      throw UnsupportedError('SQLite is not available on web. Use Firestore instead.');
+    }
     if (_database != null) return _database!;
     _database = await _initDatabase();
     return _database!;
   }
 
   Future<Database> _initDatabase() async {
+    if (_isWeb) {
+      throw UnsupportedError('SQLite is not available on web.');
+    }
     String path = join(await getDatabasesPath(), 'listify_v2.db');
     return await openDatabase(
       path,

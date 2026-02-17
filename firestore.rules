@@ -15,30 +15,135 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
       
-      // Lists subcollection
+      // Lists subcollection - Allow all authenticated users to read, only owner/collaborators can write
       match /lists/{listId} {
         // Allow all authenticated users to read any list (needed for collaboration)
-        allow read: if request.auth != null;
+        allow read, list: if request.auth != null;
         
-         // Allow owner write, or collaborator write when a share doc exists with editor/owner role
-         allow write: if request.auth != null && (
-           request.auth.uid == userId ||
-           exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) &&
-           get(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)).data.role in ['editor', 'owner']
-         );
+        // Allow owner write, list collaborators, or folder collaborators (editor/owner)
+        allow write: if request.auth != null && (
+          request.auth.uid == userId ||
+          (exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) &&
+          get(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)).data.role in ['editor', 'owner']) ||
+          (
+            (request.resource.data.folderId != null &&
+             exists(/databases/$(database)/documents/folder_shares/$(request.resource.data.folderId + '_' + request.auth.uid)) &&
+             get(/databases/$(database)/documents/folder_shares/$(request.resource.data.folderId + '_' + request.auth.uid)).data.role in ['editor', 'owner']) ||
+            (resource.data.folderId != null &&
+             exists(/databases/$(database)/documents/folder_shares/$(resource.data.folderId + '_' + request.auth.uid)) &&
+             get(/databases/$(database)/documents/folder_shares/$(resource.data.folderId + '_' + request.auth.uid)).data.role in ['editor', 'owner'])
+          )
+        );
+        
+        // Items subcollection - Allow read for anyone with access to list, write for editors/owners
+        match /items/{itemId} {
+          allow read, list: if request.auth != null && (
+            request.auth.uid == userId ||
+            exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) ||
+            (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+             exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)))
+          );
+          
+          allow create, update, delete: if request.auth != null && (
+            request.auth.uid == userId ||
+            (exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) &&
+            get(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)).data.role in ['editor', 'owner']) ||
+            (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+             exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)) &&
+             get(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)).data.role in ['editor', 'owner'])
+          );
+          
+          // Fields subcollection - Same permissions as item
+          match /fields/{fieldId} {
+            allow read, list: if request.auth != null && (
+              request.auth.uid == userId ||
+              exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) ||
+              (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+               exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)))
+            );
+            
+            allow create, update, delete: if request.auth != null && (
+              request.auth.uid == userId ||
+              (exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) &&
+              get(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)).data.role in ['editor', 'owner']) ||
+              (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+               exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)) &&
+               get(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)).data.role in ['editor', 'owner'])
+            );
+          }
+          
+          // Field values subcollection - Same permissions as item
+          match /field_values/{fieldValueId} {
+            allow read, list: if request.auth != null && (
+              request.auth.uid == userId ||
+              exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) ||
+              (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+               exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)))
+            );
+            
+            allow create, update, delete: if request.auth != null && (
+              request.auth.uid == userId ||
+              (exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) &&
+              get(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)).data.role in ['editor', 'owner']) ||
+              (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+               exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)) &&
+               get(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)).data.role in ['editor', 'owner'])
+            );
+          }
+
+          // Completions subcollection - Per-date completion tracking for Daily tracker lists
+          match /completions/{dateId} {
+            allow read, list: if request.auth != null && (
+              request.auth.uid == userId ||
+              exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) ||
+              (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+               exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)))
+            );
+            
+            allow create, update, delete: if request.auth != null && (
+              request.auth.uid == userId ||
+              (exists(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)) &&
+              get(/databases/$(database)/documents/shares/$(listId + '_' + request.auth.uid)).data.role in ['editor', 'owner']) ||
+              (get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId != null &&
+               exists(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)) &&
+               get(/databases/$(database)/documents/folder_shares/$(get(/databases/$(database)/documents/users/$(userId)/lists/$(listId)).data.folderId + '_' + request.auth.uid)).data.role in ['editor', 'owner'])
+            );
+          }
+        }
       }
     }
     
-    // Shares collection
+    // Shares collection (for lists) - Allow all authenticated users to query
     match /shares/{shareId} {
-      // Owner can create shares
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerUserId;
-      
-      // Anyone can read shares (needed for querying shared lists)
-      allow read: if request.auth != null;
-      
-      // Owner can update/delete
-      allow update, delete: if request.auth != null && request.auth.uid == resource.data.ownerUserId;
+      allow create: if request.auth != null && (
+        request.auth.uid == request.resource.data.ownerUserId ||
+        (request.resource.data.listId is string &&
+          exists(/databases/$(database)/documents/shares/$(request.resource.data.listId + '_' + request.auth.uid)) &&
+          get(/databases/$(database)/documents/shares/$(request.resource.data.listId + '_' + request.auth.uid)).data.role == 'owner')
+      );
+      allow read, list, get: if request.auth != null;
+      // Owner can delete, OR the user being shared with can remove themselves
+      allow update, delete: if request.auth != null && (
+        request.auth.uid == resource.data.ownerUserId ||
+        request.auth.uid == resource.data.sharedWithUserId
+      );
+    }
+
+    // Folder Shares collection
+    match /folder_shares/{shareId} {
+      allow create: if request.auth != null && (
+        request.auth.uid == request.resource.data.ownerUserId ||
+        (request.resource.data.folderId is string &&
+          exists(/databases/$(database)/documents/folder_shares/$(request.resource.data.folderId + '_' + request.auth.uid)) &&
+          get(/databases/$(database)/documents/folder_shares/$(request.resource.data.folderId + '_' + request.auth.uid)).data.role == 'owner')
+      );
+      allow read, list, get: if request.auth != null;
+      // Owner can delete, OR the user being shared with can remove themselves
+      allow update, delete: if request.auth != null && (
+        request.auth.uid == resource.data.ownerUserId ||
+        request.auth.uid == resource.data.sharedWithUserId
+      );
     }
   }
 }
+
