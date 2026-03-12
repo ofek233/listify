@@ -14,6 +14,10 @@ import '../widgets/ai_control_panel.dart';
 import '../database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/pdf_export_service.dart';
+import 'package:printing/printing.dart';
+import 'package:intl/intl.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 typedef ListItem = ListItemModel;
 
@@ -503,7 +507,9 @@ class _ListDetailPageState extends State<ListDetailPage> {
             // Check if field already exists
             final existing = otherItem.fields.where((f) => f.name == field.name && f.type == field.type);
             if (existing.isEmpty) {
-              final newFieldId = '${otherItem.id}_${field.name}_${DateTime.now().millisecondsSinceEpoch}';
+              // Sanitize field name - remove spaces and special characters for use in ID
+              final sanitizedName = field.name.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
+              final newFieldId = '${otherItem.id}_${sanitizedName}_${DateTime.now().millisecondsSinceEpoch}';
               await _firestoreService.createField(
                 listId: widget.listId,
                 itemId: otherItem.id,
@@ -675,6 +681,140 @@ class _ListDetailPageState extends State<ListDetailPage> {
         ownerUserId: ownerUserId,
       ),
     );
+  }
+
+  void _showPdfExportDialog() {
+    if (list == null) return;
+
+    // Detect current locale for default language selection
+    final currentLocale = Intl.getCurrentLocale();
+    bool selectedIsRTL = currentLocale.startsWith('he');
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('Export List as PDF'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Select language for PDF:'),
+                const SizedBox(height: 16),
+                RadioListTile<bool>(
+                  title: const Text('Hebrew (RTL)'),
+                  value: true,
+                  groupValue: selectedIsRTL,
+                  onChanged: (value) {
+                    setState(() {
+                      selectedIsRTL = value ?? true;
+                    });
+                  },
+                ),
+                RadioListTile<bool>(
+                  title: const Text('English (LTR)'),
+                  value: false,
+                  groupValue: selectedIsRTL,
+                  onChanged: (value) {
+                    setState(() {
+                      selectedIsRTL = value ?? false;
+                    });
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await _exportListToPdf(isRTL: selectedIsRTL);
+                },
+                icon: const Icon(Icons.download),
+                label: const Text('Export'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _exportListToPdf({required bool isRTL}) async {
+    if (list == null || items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(items.isEmpty
+              ? 'Cannot export empty list'
+              : 'List not loaded. Please try again.'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    try {
+      // Generate PDF
+      final pdf = await PdfExportService.generatePdf(
+        appList: list!,
+        items: items,
+        isRTL: isRTL,
+      );
+
+      // Download or share the PDF
+      await _downloadOrSharePdf(pdf);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error generating PDF: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadOrSharePdf(pw.Document pdf) async {
+    try {
+      final bytes = await pdf.save();
+
+      if (kIsWeb) {
+        // Web: Use printing package to download to device
+        await Printing.sharePdf(
+          bytes: bytes,
+          filename: '${list?.title ?? 'list'}.pdf',
+        );
+      } else {
+        // Mobile: Open share sheet
+        await Printing.sharePdf(
+          bytes: bytes,
+          filename: '${list?.title ?? 'list'}.pdf',
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PDF exported successfully'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error exporting PDF: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _deleteItem(ListItemModel item) async {
@@ -849,6 +989,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
                         await _loadData();
                       } else if (value == 'share') {
                         _showShareDialog();
+                      } else if (value == 'export_pdf') {
+                        _showPdfExportDialog();
                       }
                     },
                     itemBuilder: (context) => <PopupMenuEntry<String>>[
@@ -881,6 +1023,17 @@ class _ListDetailPageState extends State<ListDetailPage> {
                           ),
                         ),
                       ],
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'export_pdf',
+                        child: Row(
+                          children: [
+                            Icon(Icons.download),
+                            SizedBox(width: 8),
+                            Text('Export as PDF'),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -902,6 +1055,8 @@ class _ListDetailPageState extends State<ListDetailPage> {
                         await _loadData();
                       } else if (value == 'share') {
                         _showShareDialog();
+                      } else if (value == 'export_pdf') {
+                        _showPdfExportDialog();
                       }
                     },
                     itemBuilder: (context) => <PopupMenuEntry<String>>[
@@ -935,6 +1090,17 @@ class _ListDetailPageState extends State<ListDetailPage> {
                           ),
                         ),
                       ],
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'export_pdf',
+                        child: Row(
+                          children: [
+                            Icon(Icons.download),
+                            SizedBox(width: 8),
+                            Text('Export as PDF'),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ],

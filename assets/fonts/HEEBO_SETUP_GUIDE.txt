@@ -1,0 +1,73 @@
+** HEEBO FONT SETUP GUIDE **
+
+The PDF export feature requires Heebo font files for proper Hebrew text rendering.
+
+STEP 1: Download Heebo Font Files
+===================================
+1. Visit: https://fonts.google.com/specimen/Heebo
+2. Click the "Download Family" button (top-right)
+3. A ZIP file will download containing all font weights
+
+STEP 2: Extract Font Files
+===================================
+1. Extract the downloaded ZIP file
+2. You'll see files in the fonts/ subfolder within the archive
+3. Look for these files specifically:
+   - Heebo-Regular.ttf (or Heebo[wght]@400)
+   - Heebo-Bold.ttf (or Heebo[wght]@700)
+
+STEP 3: Place Files in Assets Folder
+===================================
+Copy the TTF files to this location:
+  assets/fonts/Heebo-Regular.ttf
+  assets/fonts/Heebo-Bold.ttf
+
+Note: Make sure the filenames match EXACTLY (case-sensitive on Linux/Mac)
+
+STEP 4: Verify pubspec.yaml
+===================================
+The pubspec.yaml has already been configured with:
+  fonts:
+    - family: Heebo
+      fonts:
+        - asset: assets/fonts/Heebo-Regular.ttf
+        - asset: assets/fonts/Heebo-Bold.ttf
+          weight: 700
+
+STEP 5: Run Flutter Pub Get
+===================================
+After adding the font files, run:
+  flutter pub get
+  
+Then rebuild your app.
+
+QUICK DOWNLOAD LINKS:
+=====================
+- Direct link to Google Fonts Heebo: https://fonts.google.com/specimen/Heebo?selection.family=Heebo
+- GitHub mirror: https://github.com/google/google-sans
+- Or search "Heebo font ttf download" for alternative sources
+
+ALTERNATIVE FONTS:
+==================
+If you prefer a different Hebrew-compatible font, these also work well:
+  - Noto Sans Hebrew (supports both Hebrew and English perfectly)
+  - Rubik (modern, widely used in Israel)
+  - Open Sans (supports Hebrew, more minimal)
+
+To use a different font:
+1. Download the TTF files
+2. Replace the filenames in assets/fonts/
+3. Update the fonts section in pubspec.yaml with the new font family name
+
+TROUBLESHOOTING:
+================
+If Hebrew text appears reversed or corrupted after adding fonts:
+1. Verify TTF files are in the exact location: assets/fonts/
+2. Check pubspec.yaml indentation (YAML is sensitive to whitespace)
+3. Run: flutter clean && flutter pub get
+4. Rebuild the app
+
+If fonts don't load:
+1. Ensure filenames match exactly (case-sensitive)
+2. Check that TTF files are valid (not corrupt during download)
+3. Rebuild with: flutter run -v (for verbose output)

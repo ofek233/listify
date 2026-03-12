@@ -15,12 +15,12 @@ class SearchResultsWidget extends StatefulWidget {
   final int itemDisplayLimit;
 
   const SearchResultsWidget({
-    Key? key,
+    super.key,
     required this.results,
     required this.onListTap,
     required this.onItemTap,
     this.itemDisplayLimit = 5,
-  }) : super(key: key);
+  });
 
   @override
   State<SearchResultsWidget> createState() => _SearchResultsWidgetState();

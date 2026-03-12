@@ -61,7 +61,7 @@ class SearchQuery {
         }
       } else if (part.startsWith('email:')) {
         email = part.substring('email:'.length);
-      } else if (!part.isEmpty) {
+      } else if (part.isNotEmpty) {
         queryWords.add(part);
       }
     }

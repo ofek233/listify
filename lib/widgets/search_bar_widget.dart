@@ -14,13 +14,13 @@ class SearchBarWidget extends StatelessWidget {
   final SearchFilterModel filterModel;
 
   const SearchBarWidget({
-    Key? key,
+    super.key,
     required this.controller,
     required this.onFocusChanged,
     required this.onClear,
     required this.onFilterTap,
     required this.filterModel,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

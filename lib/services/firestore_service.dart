@@ -3,8 +3,6 @@ import '../models/list_model.dart';
 import '../models/list_type.dart';
 import '../models/folder_model.dart';
 import '../models/user_model.dart';
-import '../models/search_query.dart';
-import '../models/search_result_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;

@@ -14,12 +14,12 @@ class RecentSearchesWidget extends StatelessWidget {
   final VoidCallback onClearHistory;
 
   const RecentSearchesWidget({
-    Key? key,
+    super.key,
     required this.recentSearches,
     required this.onSearchTap,
     required this.onRemoveSearch,
     required this.onClearHistory,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

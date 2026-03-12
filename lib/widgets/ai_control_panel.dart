@@ -203,7 +203,7 @@ class _AIControlPanelState extends State<AIControlPanel> {
                         prefixIcon: Icon(Icons.bar_chart),
                         border: OutlineInputBorder(),
                       ),
-                      value: _selectedAnalyticsType,
+                      initialValue: _selectedAnalyticsType,
                       items: AnalyticsType.values
                           .map((type) => DropdownMenuItem(
                             value: type,
@@ -418,7 +418,7 @@ class _AIControlPanelState extends State<AIControlPanel> {
       case AnalyticsType.sum:
         double sum = values.fold(0.0, (prev, curr) => prev + curr);
         setState(() {
-          _analyticsLabel = 'SUM (${itemsWithField} Items)';
+          _analyticsLabel = 'SUM ($itemsWithField Items)';
           _analyticsResult = sum;
         });
         break;
@@ -427,7 +427,7 @@ class _AIControlPanelState extends State<AIControlPanel> {
         double sum = values.fold(0.0, (prev, curr) => prev + curr);
         double average = itemsWithField > 0 ? sum / itemsWithField : 0;
         setState(() {
-          _analyticsLabel = 'AVERAGE (${itemsWithField} Items)';
+          _analyticsLabel = 'AVERAGE ($itemsWithField Items)';
           _analyticsResult = average;
         });
         break;
